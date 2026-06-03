@@ -1,0 +1,30 @@
+{
+  "name": "burnbar",
+  "description": "Rich statusline for Claude Code — context window progress bar, token count, cost tracking, model info.",
+  "owner": {
+    "name": "devnix",
+    "email": "devnix.code@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "burnbar",
+      "displayName": "Burnbar — Claude Code Statusline",
+      "source": {
+        "source": "github",
+        "repo": "devnix/burnbar"
+      },
+      "description": "Rich statusline for Claude Code with context window progress bar, token usage, cost tracking, and model info. Watch your tokens burn.",
+      "version": "0.1.0",
+      "author": {
+        "name": "devnix",
+        "email": "devnix.code@gmail.com"
+      },
+      "homepage": "https://github.com/devnix/burnbar",
+      "repository": "https://github.com/devnix/burnbar",
+      "license": "LicenseRef-FPL-1.0",
+      "keywords": ["statusline", "statusbar", "context-window", "tokens", "cost", "progress-bar", "dashboard"],
+      "category": "productivity",
+      "tags": ["statusline", "monitoring", "cost-tracking", "tokens", "context-window"]
+    }
+  ]
+}
