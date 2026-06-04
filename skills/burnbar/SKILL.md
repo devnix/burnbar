@@ -60,12 +60,30 @@ The user wants to know the current state (e.g., "burnbar status", "is burnbar ac
 
 The user wants to change which modules are shown (e.g., "hide costs", "show only bar", "configure burnbar modules").
 
-1. Explain the available modules: `header`, `model`, `bar`, `pct`, `ctx`, `next`, `total`
-2. Ask the user which modules they want
-3. Read `~/.claude/settings.json`
-4. Update the `statusLine.command` to prepend `BURNBAR_MODULES='...'` before the bash command
-5. If they want to change bar width, also prepend `BURNBAR_BAR_WIDTH=N`
-6. Tell the user to restart Claude Code
+Available modules: `header`, `model`, `bar`, `pct`, `ctx`, `next`, `total`
+
+1. Ask the user which modules they want
+2. Read `~/.claude/settings.json`
+3. Update `statusLine.command` to prepend `BURNBAR_MODULES='...'` before the bash command
+4. If they want to change bar width, also prepend `BURNBAR_BAR_WIDTH=N`
+5. Tell the user to restart Claude Code
+
+**CRITICAL: `BURNBAR_MODULES` uses COMMAS as separator, NOT spaces.**
+
+Example commands for common presets:
+```
+# All modules (default)
+BURNBAR_MODULES='header,model,bar,pct,ctx,next,total' bash "/home/user/.claude/burnbar-statusline.sh"
+
+# Hide costs (screen sharing)
+BURNBAR_MODULES='header,model,bar,pct,ctx' bash "/home/user/.claude/burnbar-statusline.sh"
+
+# Minimal
+BURNBAR_MODULES='bar,pct' bash "/home/user/.claude/burnbar-statusline.sh"
+
+# Costs only
+BURNBAR_MODULES='next,total' bash "/home/user/.claude/burnbar-statusline.sh"
+```
 
 ## Important
 
