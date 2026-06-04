@@ -1,18 +1,10 @@
-#!/bin/sh
+#!/bin/bash
 # Burnbar — Rich statusline for Claude Code
 # https://github.com/devnix/burnbar
 #
 # Configuration via environment variables:
-#   BURNBAR_MODULES  — comma-separated list of modules to display (default: all)
-#                      Available: header,model,bar,pct,ctx,next,total
+#   BURNBAR_FORMAT   — format string with {tag} placeholders (see README for tags)
 #   BURNBAR_BAR_WIDTH — progress bar width in cells (default: 30)
-
-# ── Module selection ──────────────────────────────────────────────────────────
-MODULES="${BURNBAR_MODULES:-header,model,bar,pct,ctx,next,total}"
-
-has_module() {
-  case ",$MODULES," in *",$1,"*) return 0 ;; *) return 1 ;; esac
-}
 
 # ── Parse input ───────────────────────────────────────────────────────────────
 input=$(cat)
