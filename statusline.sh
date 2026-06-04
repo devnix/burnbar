@@ -22,13 +22,13 @@ else
   level_fg="32"; level_bold="01;32"
 fi
 
-# ── Header: user@host:cwd ────────────────────────────────────────────────────
-printf '\033[01;32m%s@%s\033[00m:\033[01;34m%s\033[00m\n' \
-  "$(whoami)" "$(hostname -s)" "$cwd"
+# ── Header components ─────────────────────────────────────────────────────────
+_user=$(whoami)
+_host=$(hostname -s)
+_cwd="$cwd"
 
 # ── Model name ────────────────────────────────────────────────────────────────
-model=$(echo "$input" | jq -r '.model.display_name')
-printf '%s' "$model"
+_model=$(echo "$input" | jq -r '.model.display_name')
 
 # ── Progress bar ──────────────────────────────────────────────────────────────
 BAR_WIDTH="${BURNBAR_BAR_WIDTH:-30}"
@@ -93,11 +93,10 @@ while [ "$i" -lt "$BAR_WIDTH" ]; do
   fi
   i=$((i + 1))
 done
-
-printf "  ${bar}"
+_bar="$bar"
 
 # ── Percentage ────────────────────────────────────────────────────────────────
-printf "  %s%%" "$used_pct_display"
+_pct="${used_pct_display}%"
 
 # ── Context tokens ────────────────────────────────────────────────────────────
 current_ctx_tokens=$(echo "$input" | jq -r '
@@ -113,7 +112,7 @@ ctx_tokens_fmt=$(echo "$current_ctx_tokens" | awk '{
   else            printf "%d",    $1
 }')
 
-printf "  ctx:\033[${level_bold}m%s\033[00m" "$ctx_tokens_fmt"
+_ctx="ctx:\033[${level_bold}m${ctx_tokens_fmt}\033[00m"
 
 # ── Pricing (shared by next and total) ────────────────────────────────────────
 model_id=$(echo "$input" | jq -r '.model.id // "" | ascii_downcase')
@@ -144,9 +143,25 @@ current_cost=$(echo "$input" | jq -r \
   end
 ')
 
-printf "  next:\033[01;33m\$%s\033[00m" "$current_cost"
+_next="next:\033[01;33m\$${current_cost}\033[00m"
 
 # ── Total session cost ────────────────────────────────────────────────────────
 total_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0 | . * 10000 | round | . / 10000')
 
-printf "  total:\033[01;31m\$%s\033[00m" "$total_cost"
+_total="total:\033[01;31m\$${total_cost}\033[00m"
+
+# ── Format string and substitution engine ────────────────────────────────────
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}'
+_out="${BURNBAR_FORMAT:-$_default_fmt}"
+
+_out="${_out//\{user\}/$_user}"
+_out="${_out//\{host\}/$_host}"
+_out="${_out//\{cwd\}/$_cwd}"
+_out="${_out//\{model\}/$_model}"
+_out="${_out//\{bar\}/$_bar}"
+_out="${_out//\{pct\}/$_pct}"
+_out="${_out//\{ctx\}/$_ctx}"
+_out="${_out//\{next\}/$_next}"
+_out="${_out//\{total\}/$_total}"
+
+printf '%b\n' "$_out"
