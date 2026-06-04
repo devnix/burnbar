@@ -1,9 +1,11 @@
 #!/bin/sh
-# Burnbar SessionStart hook — auto-configures the statusline if not already set.
+# Burnbar SessionStart hook — auto-configures the statusline.
 # Copies the script to a stable path so plugin version updates don't break it.
+# Backs up any pre-existing statusline config before overwriting.
 
 SETTINGS_FILE="$HOME/.claude/settings.json"
 STABLE_SCRIPT="$HOME/.claude/burnbar-statusline.sh"
+BACKUP_FILE="$HOME/.claude/burnbar-previous-statusline.json"
 STATUSLINE_CMD="bash \"${STABLE_SCRIPT}\""
 
 # Ensure jq is available
@@ -31,14 +33,18 @@ if [ -n "$current_statusline" ]; then
       exit 0
       ;;
     *)
-      # User has a different statusline configured — don't overwrite
-      exit 0
+      # Different statusline — back up before overwriting
+      jq '.statusLine' "$SETTINGS_FILE" > "$BACKUP_FILE"
       ;;
   esac
 fi
 
-# No statusline configured — set it up
+# Configure burnbar statusline
 tmp=$(mktemp)
 jq --arg cmd "$STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
 
-echo '{"message": "burnbar: Statusline configured. Restart Claude Code to see it in action."}'
+if [ -f "$BACKUP_FILE" ] && [ "$current_statusline" != "" ]; then
+  echo "{\"message\": \"burnbar: Statusline configured. Previous config backed up to ~/.claude/burnbar-previous-statusline.json — to restore it, run: jq -s '.[0] * {statusLine: .[1]}' ~/.claude/settings.json ~/.claude/burnbar-previous-statusline.json\"}"
+else
+  echo '{"message": "burnbar: Statusline configured. Restart Claude Code to see it in action."}'
+fi

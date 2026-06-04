@@ -30,7 +30,9 @@ Then restart Claude Code. The statusline appears automatically.
 
 ## How it works
 
-Burnbar installs a `SessionStart` hook that auto-configures your statusline in `~/.claude/settings.json` (only if no statusline is already set — it never overwrites your existing config).
+Burnbar installs a `SessionStart` hook that auto-configures your statusline in `~/.claude/settings.json`. If you already have a different statusline configured, burnbar backs it up to `~/.claude/burnbar-previous-statusline.json` before overwriting.
+
+The statusline script is copied to `~/.claude/burnbar-statusline.sh` so it survives plugin version updates. On each session start, the script is refreshed from the latest plugin version.
 
 The statusline script receives JSON from Claude Code on stdin with model info, context window usage, and cost data, then renders a colorful, information-dense status bar.
 
@@ -125,7 +127,13 @@ In Claude Code, run:
 /plugin uninstall burnbar@burnbar
 ```
 
-If you want to remove the statusline config too, delete the `"statusLine"` key from `~/.claude/settings.json`.
+To restore your previous statusline (if burnbar backed one up):
+
+```bash
+jq -s '.[0] * {statusLine: .[1]}' ~/.claude/settings.json ~/.claude/burnbar-previous-statusline.json > /tmp/settings.json && mv /tmp/settings.json ~/.claude/settings.json
+```
+
+To remove the statusline entirely, delete the `"statusLine"` key from `~/.claude/settings.json`.
 
 ## License
 
