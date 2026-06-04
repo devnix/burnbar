@@ -71,31 +71,42 @@ The plugin includes a `/burnbar` skill for managing the statusline from within C
 
 Burnbar works out of the box with sensible defaults. All configuration is via environment variables — set them in your shell profile or inline in the statusline command.
 
-### `BURNBAR_MODULES`
+### `BURNBAR_FORMAT`
 
-Comma-separated list of modules to display. Default: all modules enabled.
+Format string for the statusline. Use `{tag}` placeholders for dynamic values, `\n` for newlines, and `\033[...]m...\033[00m` for ANSI colors. Any other text is rendered as-is.
 
-| Module | What it shows |
-|--------|---------------|
-| `header` | `user@host:cwd` line |
-| `model` | Model name (e.g., "Claude 4 Opus") |
-| `bar` | Context window progress bar with color gradient |
-| `pct` | Usage percentage (e.g., "47%") |
-| `ctx` | Current context tokens (e.g., "ctx:94.2k") |
-| `next` | Estimated cost of the next message |
-| `total` | Cumulative session cost |
+| Tag | What it shows |
+|-----|---------------|
+| `{user}` | Current username |
+| `{host}` | Hostname (short) |
+| `{cwd}` | Current working directory |
+| `{model}` | Model name (e.g., "Claude Sonnet 4.6") |
+| `{bar}` | Context window progress bar with color gradient |
+| `{pct}` | Usage percentage (e.g., "47%") |
+| `{ctx}` | Current context tokens (e.g., "ctx:94.2k") |
+| `{next}` | Estimated cost of the next message |
+| `{total}` | Cumulative session cost |
+
+Default (when `BURNBAR_FORMAT` is not set):
+
+```bash
+'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}'
+```
 
 Examples:
 
 ```bash
 # Hide costs (useful when screen sharing)
-export BURNBAR_MODULES="header,model,bar,pct,ctx"
+export BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}'
 
 # Minimal — just the bar and percentage
-export BURNBAR_MODULES="bar,pct"
+export BURNBAR_FORMAT='{bar}  {pct}'
 
-# Everything except the header line
-export BURNBAR_MODULES="model,bar,pct,ctx,next,total"
+# Custom separator and emoji
+export BURNBAR_FORMAT='{model} ·· {bar} {pct} 🔥 {ctx}  {next}'
+
+# Single line, no header
+export BURNBAR_FORMAT='{model}  {bar}  {pct}  {ctx}  {next}  {total}'
 ```
 
 ### `BURNBAR_BAR_WIDTH`
@@ -113,7 +124,7 @@ You can set variables inline in your `~/.claude/settings.json`:
 ```json
 {
   "statusLine": {
-    "command": "BURNBAR_MODULES='header,model,bar,pct,ctx' bash /path/to/statusline.sh"
+    "command": "BURNBAR_FORMAT='\\033[01;32m{user}@{host}\\033[00m:\\033[01;34m{cwd}\\033[00m\\n{model}  {bar}  {pct}  {ctx}' bash /path/to/statusline.sh"
   }
 }
 ```
