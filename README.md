@@ -56,9 +56,54 @@ If you prefer not to use the plugin system:
 
 ## Configuration
 
-Burnbar works out of the box with sensible defaults. The progress bar is 30 cells wide, which fits comfortably in most terminal widths.
+Burnbar works out of the box with sensible defaults. All configuration is via environment variables — set them in your shell profile or inline in the statusline command.
 
-To customize, fork the repo and edit `statusline.sh` — it's a single, self-contained shell script.
+### `BURNBAR_MODULES`
+
+Comma-separated list of modules to display. Default: all modules enabled.
+
+| Module | What it shows |
+|--------|---------------|
+| `header` | `user@host:cwd` line |
+| `model` | Model name (e.g., "Claude 4 Opus") |
+| `bar` | Context window progress bar with color gradient |
+| `pct` | Usage percentage (e.g., "47%") |
+| `ctx` | Current context tokens (e.g., "ctx:94.2k") |
+| `next` | Estimated cost of the next message |
+| `total` | Cumulative session cost |
+
+Examples:
+
+```bash
+# Hide costs (useful when screen sharing)
+export BURNBAR_MODULES="header,model,bar,pct,ctx"
+
+# Minimal — just the bar and percentage
+export BURNBAR_MODULES="bar,pct"
+
+# Everything except the header line
+export BURNBAR_MODULES="model,bar,pct,ctx,next,total"
+```
+
+### `BURNBAR_BAR_WIDTH`
+
+Progress bar width in terminal cells. Default: `30`.
+
+```bash
+export BURNBAR_BAR_WIDTH=20
+```
+
+### Setting env vars via Claude Code settings
+
+You can set variables inline in your `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "command": "BURNBAR_MODULES='header,model,bar,pct,ctx' bash /path/to/statusline.sh"
+  }
+}
+```
 
 ## Pricing model
 
