@@ -1,6 +1,7 @@
 ---
 name: burnbar
 description: Configure, restore, or check the status of the burnbar statusline. Use when the user invokes `/burnbar`, asks to configure the statusline, restore a previous statusline, or check burnbar settings.
+argument-hint: "[restore|status|configure]"
 ---
 
 # Burnbar — Statusline Manager
