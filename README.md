@@ -65,7 +65,7 @@ The plugin includes a `/burnbar` skill for managing the statusline from within C
 | `/burnbar` | Activate Burnbar (backs up existing statusline first, asks confirmation) |
 | `/burnbar restore` | Restore the previous statusline from backup |
 | `/burnbar status` | Show current statusline config and backup info |
-| `/burnbar configure` | Interactively choose which modules to show |
+| `/burnbar configure` | Edit the format string (hide/add elements, change layout) |
 
 ## Configuration
 
