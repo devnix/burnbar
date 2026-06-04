@@ -34,6 +34,6 @@ fi
 
 # No statusline configured — set it up
 tmp=$(mktemp)
-jq --arg cmd "$STATUSLINE_CMD" '.statusLine = {"command": $cmd}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+jq --arg cmd "$STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
 
 echo '{"message": "burnbar: Statusline configured. Restart Claude Code to see it in action."}'
