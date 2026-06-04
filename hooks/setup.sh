@@ -6,9 +6,14 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 STABLE_SCRIPT="$HOME/.claude/burnbar-statusline.sh"
 STATUSLINE_CMD="bash \"${STABLE_SCRIPT}\""
 
+emit() {
+  jq -n --arg ctx "$1" \
+    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+}
+
 # Ensure jq is available
 if ! command -v jq >/dev/null 2>&1; then
-  echo '{"message": "burnbar: jq is required but not installed. Install it with your package manager (apt install jq, brew install jq)."}'
+  echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"burnbar: jq is required but not installed. Tell the user to install it with their package manager (apt install jq, brew install jq)."}}'
   exit 0
 fi
 
@@ -30,7 +35,7 @@ if [ -n "$current_statusline" ]; then
       exit 0
       ;;
     *)
-      echo '{"message": "burnbar: You already have a statusline configured. Run /burnbar to back up your current statusline and switch to burnbar."}'
+      emit "burnbar plugin is installed but a different statusline is already configured. Briefly tell the user they can run /burnbar to back up their current statusline and switch to burnbar."
       exit 0
       ;;
   esac
@@ -40,4 +45,4 @@ fi
 tmp=$(mktemp)
 jq --arg cmd "$STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
 
-echo '{"message": "burnbar: Statusline configured. Restart Claude Code to see it in action."}'
+emit "burnbar statusline has just been configured in ~/.claude/settings.json. Tell the user to restart Claude Code to see it in action."
