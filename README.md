@@ -19,8 +19,11 @@ Claude 4 Opus  ██████████████░░░░░░░�
 
 ## Install
 
-```bash
-claude plugin add devnix/burnbar
+In Claude Code, run:
+
+```
+/plugin marketplace add devnix/burnbar
+/plugin install burnbar@burnbar
 ```
 
 Then restart Claude Code. The statusline appears automatically.
@@ -71,8 +74,10 @@ The `total` cost uses Claude Code's authoritative `cost.total_cost_usd` field. T
 
 ## Uninstall
 
-```bash
-claude plugin remove burnbar
+In Claude Code, run:
+
+```
+/plugin uninstall burnbar@burnbar
 ```
 
 If you want to remove the statusline config too, delete the `"statusLine"` key from `~/.claude/settings.json`.
