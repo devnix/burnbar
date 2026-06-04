@@ -164,4 +164,4 @@ _out="${_out//\{ctx\}/$_ctx}"
 _out="${_out//\{next\}/$_next}"
 _out="${_out//\{total\}/$_total}"
 
-printf '%b\n' "$_out"
+printf '%b' "$_out"
