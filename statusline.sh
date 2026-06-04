@@ -151,6 +151,11 @@ total_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0 | . * 10000 | roun
 _total="total:\033[01;31m\$${total_cost}\033[00m"
 
 # ── Format string and substitution engine ────────────────────────────────────
+_user="${_user//\\/\\\\}"
+_host="${_host//\\/\\\\}"
+_cwd="${_cwd//\\/\\\\}"
+_model="${_model//\\/\\\\}"
+
 _default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}'
 _out="${BURNBAR_FORMAT:-$_default_fmt}"
 
