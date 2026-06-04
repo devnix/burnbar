@@ -25,9 +25,15 @@ fi
 current_statusline=$(jq -r '.statusLine.command // empty' "$SETTINGS_FILE" 2>/dev/null)
 
 if [ -n "$current_statusline" ]; then
-  # A statusline is already configured — don't touch it.
-  # Use /burnbar to switch explicitly.
-  exit 0
+  case "$current_statusline" in
+    *burnbar*)
+      exit 0
+      ;;
+    *)
+      echo '{"message": "burnbar: You already have a statusline configured. Run /burnbar to back up your current statusline and switch to burnbar."}'
+      exit 0
+      ;;
+  esac
 fi
 
 # No statusline configured — set it up
