@@ -30,9 +30,9 @@ Then restart Claude Code. The statusline appears automatically.
 
 ## How it works
 
-Burnbar installs a `SessionStart` hook that auto-configures your statusline in `~/.claude/settings.json` — but only if no statusline is already set. If you already have one, burnbar won't touch it.
+Burnbar installs a `SessionStart` hook that auto-configures your statusline in `~/.claude/settings.json` — but only if no statusline is already set. If you already have one, Burnbar won't touch it.
 
-To switch to burnbar when you already have a statusline, use the `/burnbar` skill — it backs up your current config and lets you restore it later.
+To switch to Burnbar when you already have a statusline, use the `/burnbar` skill — it backs up your current config and lets you restore it later.
 
 The statusline script is copied to `~/.claude/burnbar-statusline.sh` so it survives plugin version updates. On each session start, the script is refreshed from the latest plugin version.
 
@@ -62,7 +62,7 @@ The plugin includes a `/burnbar` skill for managing the statusline from within C
 
 | Command | What it does |
 |---------|--------------|
-| `/burnbar` | Activate burnbar (backs up existing statusline first, asks confirmation) |
+| `/burnbar` | Activate Burnbar (backs up existing statusline first, asks confirmation) |
 | `/burnbar restore` | Restore the previous statusline from backup |
 | `/burnbar status` | Show current statusline config and backup info |
 | `/burnbar configure` | Interactively choose which modules to show |

@@ -1,12 +1,12 @@
 ---
 name: burnbar
-description: Configure, restore, or check the status of the burnbar statusline. Use when the user invokes `/burnbar`, asks to configure the statusline, restore a previous statusline, or check burnbar settings.
+description: Configure, restore, or check the status of the Burnbar statusline. Use when the user invokes `/burnbar`, asks to configure the statusline, restore a previous statusline, or check Burnbar settings.
 argument-hint: "[restore|status|configure]"
 ---
 
 # Burnbar — Statusline Manager
 
-You manage the burnbar statusline configuration for Claude Code.
+You manage the Burnbar statusline configuration for Claude Code.
 
 ## Paths
 
@@ -20,7 +20,7 @@ Determine the user's intent from their message:
 
 ### Setup / Activate
 
-The user wants to switch to burnbar (e.g., "configure burnbar", "activate burnbar", "use burnbar", or just `/burnbar` with no other context).
+The user wants to switch to Burnbar (e.g., "configure Burnbar", "activate Burnbar", "use Burnbar", or just `/burnbar` with no other context).
 
 1. Read `~/.claude/settings.json`
 2. Check if `statusLine.command` already contains "burnbar" → if so, tell the user it's already active and show current config
@@ -40,7 +40,7 @@ The user wants to switch to burnbar (e.g., "configure burnbar", "activate burnba
 
 ### Restore
 
-The user wants to restore their previous statusline (e.g., "restore statusline", "undo burnbar", `/burnbar restore`).
+The user wants to restore their previous statusline (e.g., "restore statusline", "undo Burnbar", `/burnbar restore`).
 
 1. Check if `~/.claude/burnbar-previous-statusline.json` exists
 2. If not, tell the user there's no backup to restore
@@ -50,7 +50,7 @@ The user wants to restore their previous statusline (e.g., "restore statusline",
 
 ### Status
 
-The user wants to know the current state (e.g., "burnbar status", "is burnbar active?").
+The user wants to know the current state (e.g., "Burnbar status", "is Burnbar active?").
 
 1. Read `~/.claude/settings.json` and show the current `statusLine` config
 2. Check if `~/.claude/burnbar-previous-statusline.json` exists and mention it if so
@@ -58,7 +58,7 @@ The user wants to know the current state (e.g., "burnbar status", "is burnbar ac
 
 ### Configure modules
 
-The user wants to change which modules are shown (e.g., "hide costs", "show only bar", "configure burnbar modules").
+The user wants to change which modules are shown (e.g., "hide costs", "show only bar", "configure Burnbar modules").
 
 Available modules: `header`, `model`, `bar`, `pct`, `ctx`, `next`, `total`
 
