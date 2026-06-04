@@ -56,33 +56,36 @@ The user wants to know the current state (e.g., "Burnbar status", "is Burnbar ac
 2. Check if `~/.claude/burnbar-previous-statusline.json` exists and mention it if so
 3. Check if `~/.claude/burnbar-statusline.sh` exists
 
-### Configure modules
+### Configure format
 
-The user wants to change which modules are shown (e.g., "hide costs", "show only bar", "configure Burnbar modules").
+The user wants to change the statusline layout (e.g., "hide costs", "show only bar", "use a custom format", "configure Burnbar format").
 
-Available modules: `header`, `model`, `bar`, `pct`, `ctx`, `next`, `total`
+Available tags: `{user}`, `{host}`, `{cwd}`, `{model}`, `{bar}`, `{pct}`, `{ctx}`, `{next}`, `{total}`
 
-1. Ask the user which modules they want
+Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format string.
+
+1. Ask the user which layout they want, or help them build a format string
 2. Read `~/.claude/settings.json`
-3. Update `statusLine.command` to prepend `BURNBAR_MODULES='...'` before the bash command
+3. Update `statusLine.command` to prepend `BURNBAR_FORMAT='...'` before the bash command
 4. If they want to change bar width, also prepend `BURNBAR_BAR_WIDTH=N`
 5. Tell the user to restart Claude Code
 
-**CRITICAL: `BURNBAR_MODULES` uses COMMAS as separator, NOT spaces.**
+**CRITICAL: the format string must be single-quoted in the command to prevent shell expansion.**
 
-Example commands for common presets:
+Example commands:
+
 ```
-# All modules (default)
-BURNBAR_MODULES='header,model,bar,pct,ctx,next,total' bash "/home/user/.claude/burnbar-statusline.sh"
+# Default (all elements, colored header)
+BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Hide costs (screen sharing)
-BURNBAR_MODULES='header,model,bar,pct,ctx' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Minimal
-BURNBAR_MODULES='bar,pct' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='{bar}  {pct}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Costs only
-BURNBAR_MODULES='next,total' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='{next}  {total}' bash "/home/user/.claude/burnbar-statusline.sh"
 ```
 
 ## Important
