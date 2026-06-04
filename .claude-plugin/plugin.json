@@ -10,5 +10,6 @@
   "license": "LicenseRef-FPL-1.0",
   "homepage": "https://github.com/devnix/burnbar",
   "repository": "https://github.com/devnix/burnbar",
-  "keywords": ["statusline", "statusbar", "context-window", "tokens", "cost", "progress-bar", "dashboard"]
+  "keywords": ["statusline", "statusbar", "context-window", "tokens", "cost", "progress-bar", "dashboard"],
+  "skills": "./skills/"
 }

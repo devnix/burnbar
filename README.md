@@ -30,11 +30,11 @@ Then restart Claude Code. The statusline appears automatically.
 
 ## How it works
 
-Burnbar installs a `SessionStart` hook that auto-configures your statusline in `~/.claude/settings.json`. If you already have a different statusline configured, burnbar backs it up to `~/.claude/burnbar-previous-statusline.json` before overwriting.
+Burnbar installs a `SessionStart` hook that auto-configures your statusline in `~/.claude/settings.json` — but only if no statusline is already set. If you already have one, burnbar won't touch it.
+
+To switch to burnbar when you already have a statusline, use the `/burnbar` skill — it backs up your current config and lets you restore it later.
 
 The statusline script is copied to `~/.claude/burnbar-statusline.sh` so it survives plugin version updates. On each session start, the script is refreshed from the latest plugin version.
-
-The statusline script receives JSON from Claude Code on stdin with model info, context window usage, and cost data, then renders a colorful, information-dense status bar.
 
 ## Requirements
 
@@ -55,6 +55,17 @@ If you prefer not to use the plugin system:
    }
    ```
 3. Restart Claude Code
+
+## Skill: `/burnbar`
+
+The plugin includes a `/burnbar` skill for managing the statusline from within Claude Code:
+
+| Command | What it does |
+|---------|--------------|
+| `/burnbar` | Activate burnbar (backs up existing statusline first, asks confirmation) |
+| `/burnbar restore` | Restore the previous statusline from backup |
+| `/burnbar status` | Show current statusline config and backup info |
+| `/burnbar configure` | Interactively choose which modules to show |
 
 ## Configuration
 
@@ -127,13 +138,7 @@ In Claude Code, run:
 /plugin uninstall burnbar@burnbar
 ```
 
-To restore your previous statusline (if burnbar backed one up):
-
-```bash
-jq -s '.[0] * {statusLine: .[1]}' ~/.claude/settings.json ~/.claude/burnbar-previous-statusline.json > /tmp/settings.json && mv /tmp/settings.json ~/.claude/settings.json
-```
-
-To remove the statusline entirely, delete the `"statusLine"` key from `~/.claude/settings.json`.
+To restore your previous statusline, use `/burnbar restore` or manually delete the `"statusLine"` key from `~/.claude/settings.json`.
 
 ## License
 
