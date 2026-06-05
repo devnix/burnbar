@@ -32,10 +32,11 @@ The user wants to switch to Burnbar (e.g., "configure Burnbar", "activate Burnba
    ```json
    {
      "type": "command",
-     "command": "bash \"~/.claude/burnbar-statusline.sh\""
+     "command": "bash \"~/.claude/burnbar-statusline.sh\"",
+     "refreshInterval": 1
    }
    ```
-   (Use the literal expanded path for `~`, not the tilde)
+   (Use the literal expanded path for `~`, not the tilde. `refreshInterval: 1` is required for the real-time cache timer.)
 5. Tell the user to restart Claude Code for changes to take effect
 
 ### Restore
@@ -60,14 +61,14 @@ The user wants to know the current state (e.g., "Burnbar status", "is Burnbar ac
 
 The user wants to change the statusline layout (e.g., "hide costs", "show only bar", "use a custom format", "configure Burnbar format").
 
-Available tags: `{user}`, `{host}`, `{cwd}`, `{model}`, `{bar}`, `{pct}`, `{ctx}`, `{next}`, `{total}`
+Available tags: `{user}`, `{host}`, `{cwd}`, `{model}`, `{bar}`, `{pct}`, `{ctx}`, `{next}`, `{total}`, `{cache}`
 
 Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format string.
 
 1. Ask the user which layout they want, or help them build a format string
 2. Read `~/.claude/settings.json`
 3. Update `statusLine.command` to prepend `BURNBAR_FORMAT='...'` before the bash command
-4. If they want to change bar width, also prepend `BURNBAR_BAR_WIDTH=N`
+4. If they want to change bar width, also prepend `BURNBAR_BAR_WIDTH=N` (context bar) or `BURNBAR_CACHE_WIDTH=N` (cache bar, default 10)
 5. Tell the user to restart Claude Code
 
 **CRITICAL: the format string must be single-quoted in the command to prevent shell expansion.**
@@ -76,7 +77,7 @@ Example commands:
 
 ```
 # Default (all elements, colored header)
-BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Hide costs (screen sharing)
 BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}' bash "/home/user/.claude/burnbar-statusline.sh"

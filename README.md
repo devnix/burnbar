@@ -4,7 +4,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ```
 devnix@host:~/project
-Claude 4 Opus  ██████████████░░░░░░░░░░░░░░░░  47%  ctx:94.2k  next:$0.42  total:$3.18
+Claude 4 Opus  ██████████████░░░░░░░░░░░░░░░░  47%  ctx:94.2k  next:$0.42  total:$3.18  ██████░░░░ 03:24
 ```
 
 ## Features
@@ -13,6 +13,7 @@ Claude 4 Opus  ██████████████░░░░░░░�
 - **Partial block characters** (▏▎▍▌▋▊▉) for smooth, sub-cell precision
 - **Token count** showing current context size, color-matched to usage level
 - **Cost tracking** — per-message input cost estimate and cumulative session total
+- **Cache TTL countdown** — progress bar + `MM:SS` timer tracking the 5-minute prompt cache (green → yellow → red)
 - **Model-aware pricing** — auto-detects Opus/Sonnet/Haiku and applies correct rates
 - **user@host:cwd** header line for quick orientation
 - **Zero configuration** — installs and configures itself automatically
@@ -50,7 +51,8 @@ If you prefer not to use the plugin system:
    ```json
    {
      "statusLine": {
-       "command": "bash ~/.claude/statusline.sh"
+       "command": "bash ~/.claude/statusline.sh",
+       "refreshInterval": 1
      }
    }
    ```
@@ -86,11 +88,12 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{ctx}` | Current context tokens (e.g., "ctx:94.2k") |
 | `{next}` | Estimated cost of the next message |
 | `{total}` | Cumulative session cost |
+| `{cache}` | Cache TTL progress bar + `MM:SS` countdown |
 
 Default (when `BURNBAR_FORMAT` is not set):
 
 ```bash
-'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}'
+'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}'
 ```
 
 Examples:
@@ -106,7 +109,7 @@ export BURNBAR_FORMAT='{bar}  {pct}'
 export BURNBAR_FORMAT='{model} ·· {bar} {pct} 🔥 {ctx}  {next}'
 
 # Single line, no header
-export BURNBAR_FORMAT='{model}  {bar}  {pct}  {ctx}  {next}  {total}'
+export BURNBAR_FORMAT='{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}'
 ```
 
 ### `BURNBAR_BAR_WIDTH`
@@ -127,6 +130,35 @@ You can set variables inline in your `~/.claude/settings.json`:
     "command": "BURNBAR_FORMAT='\\033[01;32m{user}@{host}\\033[00m:\\033[01;34m{cwd}\\033[00m\\n{model}  {bar}  {pct}  {ctx}' bash /path/to/statusline.sh"
   }
 }
+```
+
+## Cache timer
+
+The prompt cache has a 5-minute TTL — after expiration, your next message reprocesses the entire conversation (higher latency, higher cost). The `{cache}` tag shows a progress bar that drains over 5 minutes with a `MM:SS` countdown, so you can decide whether to keep going or start fresh.
+
+| Color | Remaining | Meaning |
+|-------|-----------|---------|
+| Grey | `--:--` | No API call yet (session just started) |
+| Green | > 2 min | Cache is warm |
+| Yellow | 1–2 min | Approaching expiration |
+| Red | < 1 min | Near expiration / expired |
+
+The timer resets on every API call — when you submit a message (`UserPromptSubmit`) or Claude uses a tool (`PostToolUse`). Before your first interaction, the bar renders in a neutral grey state with `--:--`.
+
+### Model & effort change tracking
+
+When the cache is created, Burnbar records the current model and effort level (per-session, using `session_id`). If you switch models or effort without sending a new message, a **`⚠ model`** or **`⚠ effort`** alert appears — the existing cache may not apply. The alert clears on your next API call.
+
+### Per-workspace isolation
+
+Each workspace gets its own cache timer. On session start, the cache is cleared automatically so stale data from previous sessions never causes false alerts. Timestamp files live at `~/.claude/.cache-ts-<hash>`. Clean up with `rm ~/.claude/.cache-ts-*`.
+
+### `BURNBAR_CACHE_WIDTH`
+
+Cache progress bar width in terminal cells. Default: `10`.
+
+```bash
+export BURNBAR_CACHE_WIDTH=15
 ```
 
 ## Pricing model

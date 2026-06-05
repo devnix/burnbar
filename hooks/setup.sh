@@ -7,19 +7,26 @@ STABLE_SCRIPT="$HOME/.claude/burnbar-statusline.sh"
 STATUSLINE_CMD="bash \"${STABLE_SCRIPT}\""
 
 emit() {
-  jq -n --arg ctx "$1" \
-    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+  user_msg="$1"
+  claude_ctx="$2"
+  jq -n --arg sys "$user_msg" --arg ctx "$claude_ctx" \
+    '{systemMessage: $sys, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
 }
 
 # Ensure jq is available
 if ! command -v jq >/dev/null 2>&1; then
-  echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Burnbar: jq is required but not installed. Tell the user to install it with their package manager (apt install jq, brew install jq)."}}'
+  echo '{"systemMessage":"Burnbar: jq is required but not installed (apt install jq / brew install jq).","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Burnbar: jq is required but not installed. Tell the user to install it with their package manager (apt install jq, brew install jq)."}}'
   exit 0
 fi
 
 # Always copy the script to the stable path (keeps it up to date across plugin upgrades)
 cp "${CLAUDE_PLUGIN_ROOT}/statusline.sh" "$STABLE_SCRIPT"
 chmod +x "$STABLE_SCRIPT"
+
+# Clear stale cache files from previous sessions
+ws_hash=$(printf '%s' "$PWD" | (md5sum 2>/dev/null || md5) | cut -c1-8)
+rm -f "$HOME/.claude/.cache-ts-$ws_hash"
+find "$HOME/.claude" -maxdepth 1 -name '.cache-meta-*' -mtime +1 -delete 2>/dev/null
 
 # Ensure settings file exists
 if [ ! -f "$SETTINGS_FILE" ]; then
@@ -32,10 +39,20 @@ current_statusline=$(jq -r '.statusLine.command // empty' "$SETTINGS_FILE" 2>/de
 if [ -n "$current_statusline" ]; then
   case "$current_statusline" in
     *burnbar*)
+      current_refresh=$(jq -r '.statusLine.refreshInterval // empty' "$SETTINGS_FILE" 2>/dev/null)
+      if [ -z "$current_refresh" ]; then
+        tmp=$(mktemp)
+        jq '.statusLine.refreshInterval = 1' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+        emit \
+          "Burnbar: added refreshInterval for real-time cache timer. Restart Claude Code to activate." \
+          "Burnbar added refreshInterval=1 to statusLine config for real-time cache countdown. Tell the user to restart Claude Code."
+      fi
       exit 0
       ;;
     *)
-      emit "Burnbar plugin is installed but a different statusline is already configured. Briefly tell the user they can run /burnbar to back up their current statusline and switch to Burnbar."
+      emit \
+        "Burnbar: a different statusline is already configured. Run /burnbar to switch to Burnbar (your current config will be backed up)." \
+        "Burnbar plugin is installed but a different statusline is already configured. Briefly tell the user they can run /burnbar to back up their current statusline and switch to Burnbar."
       exit 0
       ;;
   esac
@@ -43,6 +60,8 @@ fi
 
 # No statusline configured — set it up
 tmp=$(mktemp)
-jq --arg cmd "$STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+jq --arg cmd "$STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd, "refreshInterval": 1}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
 
-emit "Burnbar statusline has just been configured in ~/.claude/settings.json. Tell the user to restart Claude Code to see it in action."
+emit \
+  "Burnbar: statusline configured. Restart Claude Code to see it in action." \
+  "Burnbar statusline has just been configured in ~/.claude/settings.json. Tell the user to restart Claude Code to see it in action."

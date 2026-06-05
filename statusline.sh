@@ -118,13 +118,13 @@ _ctx="ctx:\033[${level_bold}m${ctx_tokens_fmt}\033[00m"
 model_id=$(echo "$input" | jq -r '.model.id // "" | ascii_downcase')
 case "$model_id" in
   *opus*)
-    price_in=15.0; price_cw=18.75; price_cr=1.50
+    price_in=15.0; price_cw=18.75; price_cr=1.50; model_family="opus"
     ;;
   *haiku*)
-    price_in=0.80; price_cw=1.0; price_cr=0.08
+    price_in=0.80; price_cw=1.0; price_cr=0.08; model_family="haiku"
     ;;
   *sonnet*|*)
-    price_in=3.0; price_cw=3.75; price_cr=0.30
+    price_in=3.0; price_cw=3.75; price_cr=0.30; model_family="sonnet"
     ;;
 esac
 
@@ -150,13 +150,111 @@ total_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0 | . * 10000 | roun
 
 _total="total:\033[01;31m\$${total_cost}\033[00m"
 
+# ── Cache timer ──────────────────────────────────────────────────────────────
+CACHE_TTL=300
+CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-10}"
+
+cache_key=$(printf '%s' "$cwd" | (md5sum 2>/dev/null || md5) | cut -c1-8)
+ts_file="$HOME/.claude/.cache-ts-$cache_key"
+_cache=""
+if [ -f "$ts_file" ]; then
+  last=$(cat "$ts_file" 2>/dev/null)
+  if ! [ "$last" -gt 0 ] 2>/dev/null; then last=0; fi
+  now=$(date +%s)
+  elapsed=$((now - last))
+  remaining=$((CACHE_TTL - elapsed))
+  [ "$remaining" -lt 0 ] && remaining=0
+
+  session_id=$(echo "$input" | jq -r '.session_id // empty')
+  current_effort=$(echo "$input" | jq -r '.effort.level // empty')
+  cache_alert=""
+
+  if [ -n "$session_id" ]; then
+    meta_key=$(printf '%s' "$session_id" | cut -c1-8)
+    meta_file="$HOME/.claude/.cache-meta-$meta_key"
+    if [ -f "$meta_file" ]; then
+      IFS='|' read -r meta_ts meta_model meta_effort < "$meta_file"
+      if [ "$meta_ts" = "$last" ]; then
+        { [ -n "$meta_model" ] && [ "$meta_model" != "$model_family" ]; } && cache_alert="model"
+        { [ -z "$cache_alert" ] && [ -n "$meta_effort" ] && [ -n "$current_effort" ] && [ "$meta_effort" != "$current_effort" ]; } && cache_alert="effort"
+      fi
+    fi
+    if [ -z "$cache_alert" ]; then
+      printf '%s|%s|%s\n' "$last" "$model_family" "$current_effort" > "$meta_file"
+    fi
+  fi
+
+  r_mins=$((remaining / 60))
+  r_secs=$((remaining % 60))
+  countdown=$(printf '%02d:%02d' "$r_mins" "$r_secs")
+
+  if [ "$remaining" -gt 120 ]; then
+    cache_fg="32"; cache_bg="42"
+  elif [ "$remaining" -gt 60 ]; then
+    cache_fg="33"; cache_bg="43"
+  else
+    cache_fg="31"; cache_bg="41"
+  fi
+
+  cache_filled_exact=$(echo "$remaining $CACHE_TTL $CACHE_BAR_WIDTH" | awk '{
+    cells = $1 / $2 * $3
+    if (cells > $3) cells = $3
+    if (cells < 0)  cells = 0
+    printf "%.4f", cells
+  }')
+  cache_filled_full=$(echo "$cache_filled_exact" | awk '{print int($1)}')
+  cache_partial_idx=$(echo "$cache_filled_exact $cache_filled_full" | awk '{
+    frac = $1 - $2
+    idx = int(frac * 8)
+    if (idx > 7) idx = 7
+    if (idx < 0) idx = 0
+    print idx
+  }')
+
+  cache_bar=""
+  ci=0
+  while [ "$ci" -lt "$CACHE_BAR_WIDTH" ]; do
+    if [ "$ci" -lt "$cache_filled_full" ]; then
+      cache_bar="${cache_bar}\033[${cache_bg}m \033[0m"
+    elif [ "$ci" -eq "$cache_filled_full" ] && [ "$cache_filled_full" -lt "$CACHE_BAR_WIDTH" ]; then
+      case "$cache_partial_idx" in
+        0) cache_bar="${cache_bar}\033[${UNFILLED_BG}m \033[0m" ;;
+        1) cache_bar="${cache_bar}\033[${cache_fg};${UNFILLED_BG}m▏\033[0m" ;;
+        2) cache_bar="${cache_bar}\033[${cache_fg};${UNFILLED_BG}m▎\033[0m" ;;
+        3) cache_bar="${cache_bar}\033[${cache_fg};${UNFILLED_BG}m▍\033[0m" ;;
+        4) cache_bar="${cache_bar}\033[${cache_fg};${UNFILLED_BG}m▌\033[0m" ;;
+        5) cache_bar="${cache_bar}\033[${cache_fg};${UNFILLED_BG}m▋\033[0m" ;;
+        6) cache_bar="${cache_bar}\033[${cache_fg};${UNFILLED_BG}m▊\033[0m" ;;
+        7) cache_bar="${cache_bar}\033[${cache_fg};${UNFILLED_BG}m▉\033[0m" ;;
+      esac
+    else
+      cache_bar="${cache_bar}\033[${UNFILLED_BG}m \033[0m"
+    fi
+    ci=$((ci + 1))
+  done
+
+  if [ -n "$cache_alert" ]; then
+    _cache="${cache_bar} \033[${cache_fg}m${countdown}\033[0m \033[01;33m⚠ ${cache_alert}\033[0m"
+  else
+    _cache="${cache_bar} \033[${cache_fg}m${countdown}\033[0m"
+  fi
+else
+  cache_bar=""
+  ci=0
+  while [ "$ci" -lt "$CACHE_BAR_WIDTH" ]; do
+    cache_bar="${cache_bar}\033[${UNFILLED_BG}m \033[0m"
+    ci=$((ci + 1))
+  done
+  _cache="${cache_bar} \033[37m--:--\033[0m"
+fi
+
 # ── Format string and substitution engine ────────────────────────────────────
 _user="${_user//\\/\\\\}"
 _host="${_host//\\/\\\\}"
 _cwd="${_cwd//\\/\\\\}"
 _model="${_model//\\/\\\\}"
 
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}'
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}'
 _out="${BURNBAR_FORMAT:-$_default_fmt}"
 
 _out="${_out//\{user\}/$_user}"
@@ -168,5 +266,6 @@ _out="${_out//\{pct\}/$_pct}"
 _out="${_out//\{ctx\}/$_ctx}"
 _out="${_out//\{next\}/$_next}"
 _out="${_out//\{total\}/$_total}"
+_out="${_out//\{cache\}/$_cache}"
 
 printf '%b' "$_out"
