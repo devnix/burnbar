@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Burnbar SessionStart hook — auto-configures the statusline only if none is set.
 # Copies the script to a stable path so plugin version updates don't break it.
 
@@ -23,10 +23,10 @@ fi
 cp "${CLAUDE_PLUGIN_ROOT}/statusline.sh" "$STABLE_SCRIPT"
 chmod +x "$STABLE_SCRIPT"
 
-# Clear stale cache files from previous sessions
-ws_hash=$(printf '%s' "$PWD" | (md5sum 2>/dev/null || md5) | cut -c1-8)
-rm -f "$HOME/.claude/.cache-ts-$ws_hash"
-find "$HOME/.claude" -maxdepth 1 -name '.cache-meta-*' -mtime +1 -delete 2>/dev/null
+# Clear stale cache files for this session and old orphans
+_sid="${CLAUDE_CODE_SESSION_ID:0:8}"
+[ -n "$_sid" ] && rm -f "$HOME/.claude/.cache-ts-$_sid" "$HOME/.claude/.cache-notif-$_sid"
+find "$HOME/.claude" -maxdepth 1 \( -name '.cache-ts-*' -o -name '.cache-meta-*' -o -name '.cache-notif-*' \) -mtime +1 -delete 2>/dev/null
 
 # Ensure settings file exists
 if [ ! -f "$SETTINGS_FILE" ]; then

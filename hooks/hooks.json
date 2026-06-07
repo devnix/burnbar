@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "k=$(printf '%s' \"$PWD\" | (md5sum 2>/dev/null || md5) | cut -c1-8); date +%s > ~/.claude/.cache-ts-$k"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/cache-touch.sh\""
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "k=$(printf '%s' \"$PWD\" | (md5sum 2>/dev/null || md5) | cut -c1-8); date +%s > ~/.claude/.cache-ts-$k"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/cache-touch.sh\""
           }
         ]
       }
