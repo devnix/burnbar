@@ -1,5 +1,14 @@
 # Burnbar Development Notes
 
+## Release Workflow
+
+The plugin version is hardcoded in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` — the plugin system reads it from there, not from the git tag. Always bump the version in both files **before** tagging:
+
+1. Update `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+2. Commit the bump
+3. `git tag <version>`
+4. `git push && git push --tags`
+
 ## Hook Output
 
 Claude Code hooks communicate with the user through the JSON they write to stdout.
