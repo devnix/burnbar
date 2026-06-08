@@ -35,7 +35,7 @@ Burnbar installs a `SessionStart` hook that auto-configures your statusline in `
 
 To switch to Burnbar when you already have a statusline, use the `/burnbar` skill — it backs up your current config and lets you restore it later.
 
-The statusline script is copied to `~/.claude/burnbar-statusline.sh` so it survives plugin version updates. On each session start, the script is refreshed from the latest plugin version.
+The statusline script is symlinked to `~/.claude/burnbar-statusline.sh`. On each session start, the symlink is recreated pointing to the current plugin version — so updates take effect immediately if the plugin directory is edited in place, or on the next restart after a version upgrade.
 
 ## Requirements
 

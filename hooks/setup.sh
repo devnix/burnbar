@@ -19,9 +19,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# Always copy the script to the stable path (keeps it up to date across plugin upgrades)
-cp "${CLAUDE_PLUGIN_ROOT}/statusline.sh" "$STABLE_SCRIPT"
-chmod +x "$STABLE_SCRIPT"
+# Always recreate the symlink (keeps it pointing to the current plugin version)
+ln -sf "${CLAUDE_PLUGIN_ROOT}/statusline.sh" "$STABLE_SCRIPT"
 
 # Clear stale cache files for this session and old orphans
 _sid="${CLAUDE_CODE_SESSION_ID:0:8}"
