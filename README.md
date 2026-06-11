@@ -13,7 +13,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 - **Cost tracking** — per-message input cost estimate and cumulative session total
 - **Model-aware pricing** — auto-detects Opus/Sonnet/Haiku and applies correct rates
 - **user@host:cwd** header line for quick orientation
-- **Zero configuration** — installs and configures itself automatically
+- **Zero configuration** — auto-configures on install; backs up any existing statusline
 
 ## Install
 
