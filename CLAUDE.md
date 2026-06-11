@@ -120,6 +120,39 @@ This walk only runs once per cache period (when the notification triggers). The 
 
 Performance: the notification path runs once per cache period (not every second). The `readlink`/`awk` walk and single `jq` call to read `preferredNotifChannel` are acceptable here — they do not affect the per-tick hot path.
 
+## Cost Sparkline Architecture
+
+### Turn Boundary Detection
+
+`cost.total_cost_usd` is only visible to the statusline (hooks don't receive it), and hooks fire on every API call (`PostToolUse`), not per turn. The split:
+
+- **Hook side**: `hooks.json` passes the hook event name as `$1` to `cache-touch.sh`; on `Stop` it writes `~/.claude/.turn-ts-<session_prefix>` (turn marker). `UserPromptSubmit` and `PostToolUse` only update the cache timestamp.
+- **Statusline side**: when the marker differs from the one stored in `.cost-hist-<key>`, the turn ended — `delta = total_cost_usd - stored_base` is appended to the history, and marker/base are rewritten.
+
+`Stop` as the turn boundary captures the cost of each Claude response immediately (including all tool calls, subagents, and thinking), instead of deferring it until the next `UserPromptSubmit`. Using only `Stop` avoids spurious zero-cost deltas that `UserPromptSubmit` would produce (no work happened since the previous `Stop`).
+
+### State File (`~/.claude/.cost-hist-<session_prefix>`)
+
+Three lines: turn marker timestamp, cost baseline (raw float), space-separated deltas (`%.4f`). Only rewritten on turn boundaries — not on every tick. Cleared on `SessionStart`, stale files cleaned with the other `.cache-*` files.
+
+The first prompt only initializes the baseline (no delta recorded — there's no previous turn to measure), so the sparkline appears after the second prompt.
+
+### Rendering
+
+The sparkline always renders at `SPARK_WIDTH` cells — unused cells are padded with `UNFILLED_BG` (grey, same as other bars). Data characters use cyan foreground on the same grey background. This keeps the layout stable regardless of how many turns have been recorded.
+
+The `{delta}` tag shows the last turn's cost as a labeled value (e.g., `delta:$0.0312`). It is extracted as the last element of the sparkline history array in the shared awk call and output before `spark_newhist` — `spark_newhist` must remain the last field in `read` because it contains spaces.
+
+Levels are computed in the existing single awk call (0–8, scaled to the window max; nonzero deltas floor at 1) and emitted as a digit string — awk never handles multibyte chars. Bash maps digit pairs to characters via hardcoded 25-entry lookup tables (`left_level*5 + right_level`, levels halved 0–8 → 0–4 per column):
+
+- **Braille** (U+2800 + column masks) — universal font support, default.
+- **Octants** (Unicode 16, U+1CD00 block + classic quadrants/eighth-blocks for the patterns Unicode excluded from it) — solid 2×4 blocks, auto-selected on Ghostty/Kitty (both render them natively without font support).
+- **Blocks** (`▁▂▃▄▅▆▇█`) — 1 turn/cell, 8 levels.
+
+The octant table was generated from Unicode 16 `UnicodeData.txt` — the bottom-filled column combos map to a mix of `BLOCK OCTANT-*` (U+1CDxx), `U+1CEA0`/`U+1CEA3` (half-column quarters), quadrants (`▖▗▙▟`), and eighth-blocks (`▂▄▆█▌▐`). Don't try to derive these arithmetically; the codepoint assignment is non-contiguous.
+
+Hot path cost: one `read` per tick for the turn marker plus pure-bash rendering — zero additional forks. The history file is read with `read` builtins and written only on turn boundaries.
+
 ## Performance
 
 The script runs every 1 second. Minimize subprocess forks.

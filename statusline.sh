@@ -6,6 +6,11 @@
 #   BURNBAR_FORMAT      — format string with {tag} placeholders (see README for tags)
 #   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 30)
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 10)
+#   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
+#   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
+
+# Config dir — respects secondary Claude profiles (CLAUDE_CONFIG_DIR)
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 # ── Parse input (single jq call) ─────────────────────────────────────────────
 input=$(cat)
@@ -47,7 +52,7 @@ CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-10}"
 UNFILLED_BG="47"
 
 cache_key="${session_id:0:8}"
-ts_file="$HOME/.claude/.cache-ts-$cache_key"
+ts_file="$CONFIG_DIR/.cache-ts-$cache_key"
 remaining=0
 has_cache=0
 if [ -f "$ts_file" ]; then
@@ -62,13 +67,50 @@ if [ -f "$ts_file" ]; then
   fi
 fi
 
+# ── Terminal family (shared by notification channel and sparkline mode) ──────
+case "${TERM_PROGRAM:-}" in
+  ghostty)        TERM_FAMILY="ghostty" ;;
+  iTerm*|WezTerm) TERM_FAMILY="osc9" ;;
+  *) [ -n "${KITTY_WINDOW_ID:-}" ] && TERM_FAMILY="kitty" || TERM_FAMILY="other" ;;
+esac
+
+# ── Cost sparkline: read per-turn state before awk ────────────────────────────
+#   .turn-ts-<key>  — written by the UserPromptSubmit hook (turn boundary)
+#   .cost-hist-<key> — 3 lines: marker ts, cost baseline, space-separated deltas
+SPARK_MODE="${BURNBAR_SPARK:-auto}"
+SPARK_WIDTH="${BURNBAR_SPARK_WIDTH:-8}"
+if [ "$SPARK_MODE" = "auto" ]; then
+  # Octants (Unicode 16) render natively in Ghostty and Kitty; braille elsewhere
+  case "$TERM_FAMILY" in
+    ghostty|kitty) SPARK_MODE="octant" ;;
+    *)             SPARK_MODE="braille" ;;
+  esac
+fi
+# Turn window: blocks fits 1 turn per cell, braille/octant fit 2
+[ "$SPARK_MODE" = "blocks" ] && spark_window=$SPARK_WIDTH || spark_window=$((SPARK_WIDTH * 2))
+spark_new=0 spark_record=0 spark_base=0 spark_hist="" spark_marker="" turn_ts=""
+if [ "$SPARK_MODE" != "none" ] && [ -n "$session_id" ]; then
+  turn_file="$CONFIG_DIR/.turn-ts-$cache_key"
+  hist_file="$CONFIG_DIR/.cost-hist-$cache_key"
+  [ -f "$turn_file" ] && read -r turn_ts < "$turn_file" 2>/dev/null
+  if [ -f "$hist_file" ]; then
+    { read -r spark_marker; read -r spark_base; read -r spark_hist; } < "$hist_file" 2>/dev/null
+  fi
+  if [ -n "$turn_ts" ] && [ "$turn_ts" != "$spark_marker" ]; then
+    spark_new=1
+    # First marker ever: start the baseline but don't record a delta
+    [ -n "$spark_marker" ] && spark_record=1
+  fi
+  [ -n "$spark_base" ] || spark_base=0
+fi
+
 # ── Cache half-time notification ──────────────────────────────────────────────
 #   Fires once per cache period when remaining crosses 50%.
 #   BURNBAR_NOTIFY: auto|osc9|osc99|osc777|bell|none
 #   Walks /proc tree to find parent pty (statusline has no /dev/tty).
 _maybe_notify() {
   [ "$has_cache" = 1 ] && [ "$remaining" -gt 0 ] && [ "$remaining" -le $((CACHE_TTL / 2)) ] || return 0
-  local _notif_file="$HOME/.claude/.cache-notif-$cache_key"
+  local _notif_file="$CONFIG_DIR/.cache-notif-$cache_key"
   if [ -f "$_notif_file" ]; then
     local _notif_ts; read -r _notif_ts < "$_notif_file" 2>/dev/null
     [ "$_notif_ts" = "$last" ] && return 0
@@ -85,14 +127,14 @@ _maybe_notify() {
   _nm="${BURNBAR_NOTIFY:-auto}"
   if [ "$_nm" = "auto" ]; then
     local _pref
-    _pref=$(jq -r '.preferredNotifChannel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+    _pref=$(jq -r '.preferredNotifChannel // empty' "$CONFIG_DIR/settings.json" 2>/dev/null)
     if [ "$_pref" = "terminal_bell" ]; then
       _nm="bell"
     else
-      case "${TERM_PROGRAM:-}" in
-        ghostty)       _nm="osc777" ;;
-        iTerm*|WezTerm) _nm="osc9" ;;
-        *) [ -n "${KITTY_WINDOW_ID:-}" ] && _nm="osc99" || _nm="osc777" ;;
+      case "$TERM_FAMILY" in
+        osc9)  _nm="osc9" ;;
+        kitty) _nm="osc99" ;;
+        *)     _nm="osc777" ;;
       esac
     fi
   fi
@@ -109,12 +151,14 @@ _maybe_notify
 
 # ── All numeric computation (single awk call) ────────────────────────────────
 read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
-  cache_filled_full cache_partial_idx <<< "$(
+  cache_filled_full cache_partial_idx spark_levels last_delta spark_newhist <<< "$(
   LC_NUMERIC=C awk -v pct="$used_pct" -v bw="$BAR_WIDTH" \
       -v it="$input_toks" -v cwt="$cw_toks" -v crt="$cr_toks" \
       -v pin="$price_in" -v pcw="$price_cw" -v pcr="$price_cr" \
       -v traw="$total_cost_raw" \
       -v rem="$remaining" -v ttl="$CACHE_TTL" -v cbw="$CACHE_BAR_WIDTH" \
+      -v srec="$spark_record" -v sb="$spark_base" -v shist="$spark_hist" \
+      -v smaxn="$spark_window" -v snew_needed="$spark_new" \
   'BEGIN {
     pct_int = int(pct + 0.5)
 
@@ -141,9 +185,37 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
       if (cpi > 7) cpi = 7; if (cpi < 0) cpi = 0
     } else { cff = 0; cpi = 0 }
 
-    printf "%d %d %d %s %.4f %.4f %d %d", pct_int, ff, pi, cfmt, cost, tc, cff, cpi
+    # Sparkline: append this turn delta, keep last smaxn turns, scale to 0-8
+    if (srec) {
+      d = traw - sb; if (d < 0) d = 0
+      shist = (shist == "") ? sprintf("%.4f", d) : shist " " sprintf("%.4f", d)
+    }
+    n = split(shist, sh, " ")
+    si = (n > smaxn) ? n - smaxn + 1 : 1
+    smax = 0
+    for (i = si; i <= n; i++) if (sh[i] + 0 > smax) smax = sh[i] + 0
+    slv = ""; snew = ""
+    for (i = si; i <= n; i++) {
+      if (sh[i] + 0 <= 0) l = 0
+      else {
+        l = int(sh[i] / smax * 8 + 0.5)
+        if (l < 1) l = 1; if (l > 8) l = 8
+      }
+      slv = slv l
+      # The trimmed history is only persisted on turn boundaries — skip otherwise
+      if (snew_needed) snew = (snew == "") ? sh[i] : snew " " sh[i]
+    }
+    if (slv == "") slv = "-"
+    ld = (n > 0) ? sprintf("%.4f", sh[n] + 0) : "0.0000"
+
+    printf "%d %d %d %s %.4f %.4f %d %d %s %s %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, snew
   }'
 )"
+
+# ── Cost sparkline: persist state on turn boundary ────────────────────────────
+if [ "$spark_new" = 1 ]; then
+  printf '%s\n%s\n%s\n' "$turn_ts" "$total_cost_raw" "$spark_newhist" > "$hist_file"
+fi
 
 # ── Color for usage level ─────────────────────────────────────────────────────
 if [ "$used_pct_int" -ge 80 ] 2>/dev/null; then
@@ -194,13 +266,14 @@ _pct="${used_pct_int}%"
 _ctx="ctx:\033[${level_bold}m${ctx_fmt}\033[00m"
 _next="next:\033[01;33m\$${current_cost}\033[00m"
 _total="total:\033[01;31m\$${total_cost}\033[00m"
+_delta="delta:\033[01;36m\$${last_delta}\033[00m"
 
 # ── Cache timer rendering ─────────────────────────────────────────────────────
 _cache=""
 if [ "$has_cache" = 1 ]; then
   cache_alert=""
   if [ -n "$session_id" ]; then
-    meta_file="$HOME/.claude/.cache-meta-$cache_key"
+    meta_file="$CONFIG_DIR/.cache-meta-$cache_key"
 
     if [ -f "$meta_file" ]; then
       IFS='|' read -r meta_ts meta_model meta_effort < "$meta_file"
@@ -238,13 +311,56 @@ else
   _cache="${_bar_out} \033[37m--:--\033[0m"
 fi
 
+# ── Cost sparkline rendering ──────────────────────────────────────────────────
+#   Per-turn cost deltas as a sparkline. 2 turns per cell (braille/octant),
+#   1 turn per cell (blocks). awk already trimmed the levels to the window.
+_spark=""
+if [ "$SPARK_MODE" != "none" ]; then
+  _s="" _spark_cells=0 _lv="$spark_levels"
+  if [ -n "$_lv" ] && [ "$_lv" != "-" ]; then
+    _i=0
+    if [ "$SPARK_MODE" = "blocks" ]; then
+      _tbl=(" " "▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+      while [ "$_i" -lt "${#_lv}" ]; do
+        _s="${_s}${_tbl[${_lv:_i:1}]}"
+        _i=$((_i + 1))
+      done
+      _spark_cells=${#_lv}
+    else
+      # Lookup tables: index = left_level * 5 + right_level (levels 0-4 per column)
+      if [ "$SPARK_MODE" = "octant" ]; then
+        _tbl=(" " "𜺠" "▗" "𜶖" "▐" "𜺣" "▂" "𜷋" "𜷓" "𜷕" "▖" "𜶻" "▄" "𜷡" "▟" "𜵈" "𜶿" "𜷞" "▆" "𜷥" "▌" "𜷀" "▙" "𜷤" "█")
+      else
+        _tbl=("⠀" "⢀" "⢠" "⢰" "⢸" "⡀" "⣀" "⣠" "⣰" "⣸" "⡄" "⣄" "⣤" "⣴" "⣼" "⡆" "⣆" "⣦" "⣶" "⣾" "⡇" "⣇" "⣧" "⣷" "⣿")
+      fi
+      [ $((${#_lv} % 2)) -eq 1 ] && _lv="0$_lv"
+      while [ "$_i" -lt "${#_lv}" ]; do
+        # Halve 0-8 levels to 0-4 per braille/octant column (0→0, 1-2→1, … 7-8→4)
+        _a=$(((${_lv:_i:1} + 1) / 2))
+        _b=$(((${_lv:_i+1:1} + 1) / 2))
+        _s="${_s}${_tbl[_a*5+_b]}"
+        _i=$((_i + 2))
+      done
+      _spark_cells=$((${#_lv} / 2))
+    fi
+  fi
+  _pad=$((SPARK_WIDTH - _spark_cells))
+  [ "$_pad" -lt 0 ] && _pad=0
+  _spark="" _i=0
+  while [ "$_i" -lt "$_pad" ]; do
+    _spark="${_spark}\033[${UNFILLED_BG}m \033[0m"
+    _i=$((_i + 1))
+  done
+  [ -n "$_s" ] && _spark="${_spark}\033[36;${UNFILLED_BG}m${_s}\033[0m"
+fi
+
 # ── Format string and substitution engine ─────────────────────────────────────
 _user="${_user//\\/\\\\}"
 _host="${_host//\\/\\\\}"
 _cwd="${_cwd//\\/\\\\}"
 _model="${_model//\\/\\\\}"
 
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}'
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}  {spark}  {delta}'
 _out="${BURNBAR_FORMAT:-$_default_fmt}"
 
 _out="${_out//\{user\}/$_user}"
@@ -256,6 +372,8 @@ _out="${_out//\{pct\}/$_pct}"
 _out="${_out//\{ctx\}/$_ctx}"
 _out="${_out//\{next\}/$_next}"
 _out="${_out//\{total\}/$_total}"
+_out="${_out//\{spark\}/$_spark}"
 _out="${_out//\{cache\}/$_cache}"
+_out="${_out//\{delta\}/$_delta}"
 
 printf '%b' "$_out"

@@ -2,8 +2,11 @@
 # Burnbar SessionStart hook — auto-configures the statusline only if none is set.
 # Copies the script to a stable path so plugin version updates don't break it.
 
-SETTINGS_FILE="$HOME/.claude/settings.json"
-STABLE_SCRIPT="$HOME/.claude/burnbar-statusline.sh"
+# Config dir — respects secondary Claude profiles (CLAUDE_CONFIG_DIR)
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+mkdir -p "$CONFIG_DIR"
+SETTINGS_FILE="$CONFIG_DIR/settings.json"
+STABLE_SCRIPT="$CONFIG_DIR/burnbar-statusline.sh"
 STATUSLINE_CMD="bash \"${STABLE_SCRIPT}\""
 
 emit() {
@@ -24,8 +27,10 @@ ln -sf "${CLAUDE_PLUGIN_ROOT}/statusline.sh" "$STABLE_SCRIPT"
 
 # Clear stale cache files for this session and old orphans
 _sid="${CLAUDE_CODE_SESSION_ID:0:8}"
-[ -n "$_sid" ] && rm -f "$HOME/.claude/.cache-ts-$_sid" "$HOME/.claude/.cache-notif-$_sid"
-find "$HOME/.claude" -maxdepth 1 \( -name '.cache-ts-*' -o -name '.cache-meta-*' -o -name '.cache-notif-*' \) -mtime +1 -delete 2>/dev/null
+[ -n "$_sid" ] && rm -f "$CONFIG_DIR/.cache-ts-$_sid" "$CONFIG_DIR/.cache-notif-$_sid" \
+  "$CONFIG_DIR/.turn-ts-$_sid" "$CONFIG_DIR/.cost-hist-$_sid"
+find "$CONFIG_DIR" -maxdepth 1 \( -name '.cache-ts-*' -o -name '.cache-meta-*' -o -name '.cache-notif-*' \
+  -o -name '.turn-ts-*' -o -name '.cost-hist-*' \) -mtime +1 -delete 2>/dev/null
 
 # Ensure settings file exists
 if [ ! -f "$SETTINGS_FILE" ]; then
@@ -63,4 +68,4 @@ jq --arg cmd "$STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cm
 
 emit \
   "Burnbar: statusline configured. Restart Claude Code to see it in action." \
-  "Burnbar statusline has just been configured in ~/.claude/settings.json. Tell the user to restart Claude Code to see it in action."
+  "Burnbar statusline has just been configured in ${SETTINGS_FILE}. Tell the user to restart Claude Code to see it in action."

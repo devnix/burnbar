@@ -87,12 +87,14 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{ctx}` | Current context tokens (e.g., "ctx:94.2k") |
 | `{next}` | Estimated cost of the next message |
 | `{total}` | Cumulative session cost |
+| `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline)) |
+| `{delta}` | Last turn's cost delta (e.g., "delta:$0.0312") |
 | `{cache}` | Cache TTL progress bar + `MM:SS` countdown |
 
 Default (when `BURNBAR_FORMAT` is not set):
 
 ```bash
-'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}'
+'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}  {spark}  {delta}'
 ```
 
 Examples:
@@ -158,6 +160,44 @@ Cache progress bar width in terminal cells. Default: `10`.
 
 ```bash
 export BURNBAR_CACHE_WIDTH=15
+```
+
+## Cost sparkline
+
+The `{spark}` tag draws a compact bar chart of how much each turn cost, so spending spikes stand out at a glance:
+
+```
+total:$3.42  ⣀⣀⣀⣸⣀⣠⣀⣀
+```
+
+Each turn's cost (the delta of `cost.total_cost_usd` between responses) is scaled against the most expensive turn in the visible window. In the default braille/octant modes, each terminal cell packs **two turns** side by side — the default 8 cells cover the last 16 turns.
+
+The sparkline always renders at its full configured width — unused cells show the same grey background as the unfilled bar sections, so the layout stays stable as turns accumulate.
+
+The first data point appears after Claude's second response (one full turn must complete to measure its cost). The `{delta}` tag shows the numeric value of the most recent turn's cost.
+
+### `BURNBAR_SPARK`
+
+Rendering mode. Default: `auto`.
+
+| Mode | Cell grid | Turns/cell | Notes |
+|------|-----------|------------|-------|
+| `auto` | — | — | `octant` on Ghostty/Kitty, `braille` elsewhere |
+| `braille` | 2×4 dots | 2 | Universal font support |
+| `octant` | 2×4 solid | 2 | Unicode 16 block octants — best looks, needs terminal support |
+| `blocks` | 1×8 | 1 | Classic `▁▂▃▄▅▆▇█` sparkline |
+| `none` | — | — | Disable (also skips state tracking) |
+
+```bash
+export BURNBAR_SPARK=blocks
+```
+
+### `BURNBAR_SPARK_WIDTH`
+
+Sparkline width in terminal cells. Default: `8` (= 16 turns in braille/octant, 8 in blocks).
+
+```bash
+export BURNBAR_SPARK_WIDTH=12
 ```
 
 ## Pricing model
