@@ -2,10 +2,7 @@
 
 Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — watch your tokens burn.
 
-```
-devnix@host:~/project
-Claude 4 Opus  ██████████████░░░░░░░░░░░░░░░░  47%  ctx:94.2k  next:$0.42  total:$3.18  ██████░░░░ 03:24
-```
+<video src="https://github.com/devnix/burnbar/releases/download/0.1.1/burnbar.mp4" autoplay loop muted playsinline></video>
 
 ## Features
 
@@ -36,6 +33,8 @@ Burnbar installs a `SessionStart` hook that auto-configures your statusline in `
 To switch to Burnbar when you already have a statusline, use the `/burnbar` skill — it backs up your current config and lets you restore it later.
 
 The statusline script is symlinked to `~/.claude/burnbar-statusline.sh`. On each session start, the symlink is recreated pointing to the current plugin version — so updates take effect immediately if the plugin directory is edited in place, or on the next restart after a version upgrade.
+
+Secondary Claude profiles are supported: if `CLAUDE_CONFIG_DIR` is set, Burnbar uses it instead of `~/.claude` for settings, the stable script, and all cache state files. Set it in the environment when launching Claude Code so hooks and the statusline inherit it. Paths in this README show the `~/.claude` default — substitute your config dir if you use a profile.
 
 ## Requirements
 
@@ -151,7 +150,7 @@ When the cache is created, Burnbar records the current model and effort level (p
 
 ### Per-workspace isolation
 
-Each workspace gets its own cache timer. On session start, the cache is cleared automatically so stale data from previous sessions never causes false alerts. Timestamp files live at `~/.claude/.cache-ts-<hash>`. Clean up with `rm ~/.claude/.cache-ts-*`.
+Each workspace gets its own cache timer. On session start, the cache is cleared automatically so stale data from previous sessions never causes false alerts. Timestamp files live at `~/.claude/.cache-ts-<hash>` (or `$CLAUDE_CONFIG_DIR/.cache-ts-<hash>` for secondary profiles). Clean up with `rm ~/.claude/.cache-ts-*`.
 
 ### `BURNBAR_CACHE_WIDTH`
 
