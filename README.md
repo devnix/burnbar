@@ -2,7 +2,7 @@
 
 Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — watch your tokens burn.
 
-<video src="https://github.com/devnix/burnbar/releases/download/0.1.1/burnbar.mp4" autoplay loop muted playsinline></video>
+![Burnbar demo](https://github.com/devnix/burnbar/releases/download/0.1.1/burnbar.gif)
 
 ## Features
 
