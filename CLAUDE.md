@@ -133,9 +133,9 @@ Performance: the notification path runs once per cache period (not every second)
 
 ### State File (`~/.claude/.cost-hist-<session_prefix>`)
 
-Three lines: turn marker (opaque string, `<epoch>-$RANDOM` so two turns ending in the same second still differ), cost baseline (raw float), space-separated deltas (`%.4f`). Only rewritten on turn boundaries — not on every tick. Cleared on `SessionStart`, stale files cleaned with the other `.cache-*` files.
+Three lines: turn marker (opaque string, `<epoch>-$RANDOM` so two turns ending in the same second still differ), cost baseline (raw float), space-separated deltas (`%.4f`). Rewritten on turn boundaries and once at tracking start to capture the baseline — not on every tick. Cleared on `SessionStart`, stale files cleaned with the other `.cache-*` files.
 
-The first completed turn only initializes the baseline (no delta recorded — there's no previous turn to measure), so the sparkline appears after the second turn completes.
+The baseline is captured eagerly at tracking start (the first statusline tick where no baseline exists yet, before any turn completes), with an empty marker. This makes the **first** completed turn record a real delta (`total - baseline`), so the sparkline appears after the first turn. For a fresh session the baseline is ~0 (so the first turn's full cost is recorded); for a **resumed** session it's the already-accumulated total (so the first post-resume turn measures only its own cost — no spurious giant first bar). The eager write happens at most once until a turn boundary; if a turn boundary is somehow crossed before any tick captured a baseline, the old fallback applies (re-init, no delta — first turn lost).
 
 Robustness invariants:
 
@@ -216,6 +216,12 @@ The script runs every 1 second. Minimize subprocess forks.
 **Bug**: `awk '{print $4}'` on `/proc/pid/stat` assumes field 4 is the PPID. The comm field (field 2, in parentheses) can contain spaces — e.g. `123 (my app) S 456 ...` — shifting all subsequent fields and returning the wrong value. The pty-discovery walk either terminates early or follows the wrong PID.
 
 **Fix**: `awk '{sub(/.*\) /, ""); print $2}'` — strips everything through the closing `)` of comm before indexing fields, making PPID extraction robust regardless of the process name.
+
+### First turn's cost delta lost (baseline captured too late)
+
+**Bug**: The cost baseline was only captured at the first turn boundary, so the first turn's real cost (`total - 0`) was discarded — the sparkline and `delta` only appeared from the second turn onward.
+
+**Fix**: Capture the baseline eagerly at tracking start and drop the `-n "$spark_marker"` requirement from `spark_record`. See **Cost Sparkline Architecture → State File** for the eager-capture semantics (the `spark_init` seed routed through the sole persist writer, and the fresh-vs-resumed baseline reasoning).
 
 ### Hook scripts must use `#!/bin/bash`
 

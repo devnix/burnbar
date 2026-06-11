@@ -88,7 +88,7 @@ if [ "$SPARK_MODE" = "auto" ]; then
     *)             SPARK_MODE="braille" ;;
   esac
 fi
-spark_new=0 spark_record=0 spark_base="" spark_hist="" spark_marker="" turn_ts=""
+spark_new=0 spark_record=0 spark_init=0 spark_base="" spark_hist="" spark_marker="" turn_ts=""
 spark_window=0 spark_keep=0 spark_lmax=8
 if [ "$SPARK_MODE" != "none" ] && [ -n "$session_id" ]; then
   # Render window: blocks fits 1 turn per cell (levels 0-8), braille/octant
@@ -107,12 +107,21 @@ if [ "$SPARK_MODE" != "none" ] && [ -n "$session_id" ]; then
     { read -r spark_marker; read -r spark_base; read -r spark_hist; } < "$hist_file" 2>/dev/null
   fi
   # A corrupt/truncated baseline would make the next delta swallow the whole
-  # session cost — treat it as a re-init (baseline rewritten, no delta recorded)
-  case "$spark_base" in ''|*[!0-9.]*) spark_base="" ;; esac
+  # session cost — treat it as a re-init (baseline rewritten, no delta recorded).
+  # eE+- are allowed: jq renders tiny costs in scientific notation (e.g. 7E-7),
+  # which awk parses fine — rejecting them would needlessly wipe a valid baseline.
+  case "$spark_base" in ''|*[!0-9.eE+-]*) spark_base="" ;; esac
   if [ -n "$turn_ts" ] && [ "$turn_ts" != "$spark_marker" ]; then
     spark_new=1
-    # First marker ever (or invalid baseline): start the baseline, no delta
-    [ -n "$spark_marker" ] && [ -n "$spark_base" ] && spark_record=1
+    # Any baseline (incl. the one captured at tracking start) lets even the
+    # FIRST turn record total - baseline; missing/corrupt falls back to re-init.
+    [ -n "$spark_base" ] && spark_record=1
+  elif [ -z "$spark_base" ]; then
+    # No turn boundary and no baseline yet: flag tracking start so the persist
+    # block seeds the baseline before the first turn (else the first turn's
+    # delta is lost). On a resumed session this captures the accumulated total,
+    # so the first post-resume turn measures only its own cost.
+    spark_init=1
   fi
 fi
 
@@ -230,7 +239,7 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
   }'
 )"
 
-# ── Cost sparkline: persist state on turn boundary ────────────────────────────
+# ── Cost sparkline: persist state (sole writer of the history file) ───────────
 # A recorded turn must produce deltas — the guard keeps a failed awk/jq tick
 # from wiping the accumulated history (same class as the notification sentinel)
 if [ "$spark_new" = 1 ]; then
@@ -239,6 +248,10 @@ if [ "$spark_new" = 1 ]; then
     # baseline was missing/corrupt, the history itself is still valid
     printf '%s\n%s\n%s\n' "$turn_ts" "$total_cost_raw" "${spark_newhist:-$spark_hist}" > "$hist_file"
   fi
+elif [ "$spark_init" = 1 ]; then
+  # Tracking start: seed the baseline (empty marker, untouched history) once,
+  # before the first turn boundary
+  printf '%s\n%s\n%s\n' "$spark_marker" "$total_cost_raw" "$spark_hist" > "$hist_file"
 fi
 
 # ── Color for usage level ─────────────────────────────────────────────────────
