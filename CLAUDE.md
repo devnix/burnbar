@@ -8,6 +8,16 @@ The plugin version is hardcoded in `.claude-plugin/plugin.json` and `.claude-plu
 2. Commit the bump
 3. `git tag <version>`
 4. `git push && git push --tags`
+5. **Publish a GitHub Release — mandatory, not optional.** Every tag MUST have a
+   matching Release; a tag without one leaves the public "Latest" stale and
+   misleads users. Run `gh release create <version> --title "<version>"
+   --generate-notes --latest`. (Use `--latest=false` only when backfilling an
+   older version.) Never push a tag without creating its Release in the same
+   session.
+
+When editing the manifests, change only the `version` line — do not let `jq`
+rewrite the file, as it reformats inline arrays (e.g. `keywords`). Edit the line
+in place.
 
 ## Hook Output
 
