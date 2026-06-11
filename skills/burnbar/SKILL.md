@@ -63,7 +63,7 @@ The user wants to know the current state (e.g., "Burnbar status", "is Burnbar ac
 
 The user wants to change the statusline layout (e.g., "hide costs", "show only bar", "use a custom format", "configure Burnbar format").
 
-Available tags: `{user}`, `{host}`, `{cwd}`, `{model}`, `{bar}`, `{pct}`, `{ctx}`, `{next}`, `{total}`, `{spark}`, `{cache}`
+Available tags: `{user}`, `{host}`, `{cwd}`, `{model}`, `{bar}`, `{pct}`, `{ctx}`, `{next}`, `{total}`, `{spark}`, `{delta}`, `{cache}`
 
 Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format string.
 

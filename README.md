@@ -186,7 +186,7 @@ Rendering mode. Default: `auto`.
 | `braille` | 2×4 dots | 2 | Universal font support |
 | `octant` | 2×4 solid | 2 | Unicode 16 block octants — best looks, needs terminal support |
 | `blocks` | 1×8 | 1 | Classic `▁▂▃▄▅▆▇█` sparkline |
-| `none` | — | — | Disable (also skips state tracking) |
+| `none` | — | — | Disable (skips cost-history tracking; the turn-marker hook still runs) |
 
 ```bash
 export BURNBAR_SPARK=blocks

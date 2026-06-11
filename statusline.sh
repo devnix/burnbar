@@ -69,16 +69,18 @@ fi
 
 # ── Terminal family (shared by notification channel and sparkline mode) ──────
 case "${TERM_PROGRAM:-}" in
-  ghostty)        TERM_FAMILY="ghostty" ;;
-  iTerm*|WezTerm) TERM_FAMILY="osc9" ;;
+  ghostty) TERM_FAMILY="ghostty" ;;
+  iTerm*)  TERM_FAMILY="iterm" ;;
+  WezTerm) TERM_FAMILY="wezterm" ;;
   *) [ -n "${KITTY_WINDOW_ID:-}" ] && TERM_FAMILY="kitty" || TERM_FAMILY="other" ;;
 esac
 
 # ── Cost sparkline: read per-turn state before awk ────────────────────────────
-#   .turn-ts-<key>  — written by the UserPromptSubmit hook (turn boundary)
-#   .cost-hist-<key> — 3 lines: marker ts, cost baseline, space-separated deltas
+#   .turn-ts-<key>  — written by the Stop hook (turn boundary, opaque marker)
+#   .cost-hist-<key> — 3 lines: marker, cost baseline, space-separated deltas
 SPARK_MODE="${BURNBAR_SPARK:-auto}"
 SPARK_WIDTH="${BURNBAR_SPARK_WIDTH:-8}"
+case "$SPARK_WIDTH" in ''|0|*[!0-9]*) SPARK_WIDTH=8 ;; esac
 if [ "$SPARK_MODE" = "auto" ]; then
   # Octants (Unicode 16) render natively in Ghostty and Kitty; braille elsewhere
   case "$TERM_FAMILY" in
@@ -86,22 +88,32 @@ if [ "$SPARK_MODE" = "auto" ]; then
     *)             SPARK_MODE="braille" ;;
   esac
 fi
-# Turn window: blocks fits 1 turn per cell, braille/octant fit 2
-[ "$SPARK_MODE" = "blocks" ] && spark_window=$SPARK_WIDTH || spark_window=$((SPARK_WIDTH * 2))
-spark_new=0 spark_record=0 spark_base=0 spark_hist="" spark_marker="" turn_ts=""
+spark_new=0 spark_record=0 spark_base="" spark_hist="" spark_marker="" turn_ts=""
+spark_window=0 spark_keep=0 spark_lmax=8
 if [ "$SPARK_MODE" != "none" ] && [ -n "$session_id" ]; then
+  # Render window: blocks fits 1 turn per cell (levels 0-8), braille/octant
+  # fit 2 (levels 0-4 per column). The persisted history keeps at least 32
+  # turns so narrowing the display mode/width never destroys data.
+  if [ "$SPARK_MODE" = "blocks" ]; then
+    spark_window=$SPARK_WIDTH
+  else
+    spark_window=$((SPARK_WIDTH * 2)) spark_lmax=4
+  fi
+  spark_keep=$((spark_window > 32 ? spark_window : 32))
   turn_file="$CONFIG_DIR/.turn-ts-$cache_key"
   hist_file="$CONFIG_DIR/.cost-hist-$cache_key"
   [ -f "$turn_file" ] && read -r turn_ts < "$turn_file" 2>/dev/null
   if [ -f "$hist_file" ]; then
     { read -r spark_marker; read -r spark_base; read -r spark_hist; } < "$hist_file" 2>/dev/null
   fi
+  # A corrupt/truncated baseline would make the next delta swallow the whole
+  # session cost — treat it as a re-init (baseline rewritten, no delta recorded)
+  case "$spark_base" in ''|*[!0-9.]*) spark_base="" ;; esac
   if [ -n "$turn_ts" ] && [ "$turn_ts" != "$spark_marker" ]; then
     spark_new=1
-    # First marker ever: start the baseline but don't record a delta
-    [ -n "$spark_marker" ] && spark_record=1
+    # First marker ever (or invalid baseline): start the baseline, no delta
+    [ -n "$spark_marker" ] && [ -n "$spark_base" ] && spark_record=1
   fi
-  [ -n "$spark_base" ] || spark_base=0
 fi
 
 # ── Cache half-time notification ──────────────────────────────────────────────
@@ -158,7 +170,7 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
       -v traw="$total_cost_raw" \
       -v rem="$remaining" -v ttl="$CACHE_TTL" -v cbw="$CACHE_BAR_WIDTH" \
       -v srec="$spark_record" -v sb="$spark_base" -v shist="$spark_hist" \
-      -v smaxn="$spark_window" -v snew_needed="$spark_new" \
+      -v smaxn="$spark_window" -v skeep="$spark_keep" -v lmax="$spark_lmax" \
   'BEGIN {
     pct_int = int(pct + 0.5)
 
@@ -185,7 +197,8 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
       if (cpi > 7) cpi = 7; if (cpi < 0) cpi = 0
     } else { cff = 0; cpi = 0 }
 
-    # Sparkline: append this turn delta, keep last smaxn turns, scale to 0-8
+    # Sparkline: append this turn delta, render last smaxn turns quantized to
+    # the mode-native lmax levels (8 for blocks, 4 per column for braille/octant)
     if (srec) {
       d = traw - sb; if (d < 0) d = 0
       shist = (shist == "") ? sprintf("%.4f", d) : shist " " sprintf("%.4f", d)
@@ -194,18 +207,23 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
     si = (n > smaxn) ? n - smaxn + 1 : 1
     smax = 0
     for (i = si; i <= n; i++) if (sh[i] + 0 > smax) smax = sh[i] + 0
-    slv = ""; snew = ""
+    slv = ""
     for (i = si; i <= n; i++) {
       if (sh[i] + 0 <= 0) l = 0
       else {
-        l = int(sh[i] / smax * 8 + 0.5)
-        if (l < 1) l = 1; if (l > 8) l = 8
+        l = int(sh[i] / smax * lmax + 0.5)
+        if (l < 1) l = 1; if (l > lmax) l = lmax
       }
       slv = slv l
-      # The trimmed history is only persisted on turn boundaries — skip otherwise
-      if (snew_needed) snew = (snew == "") ? sh[i] : snew " " sh[i]
     }
     if (slv == "") slv = "-"
+    # Persisted history is only consumed on turn boundaries; keep skeep turns
+    # (>= any render window) so display-mode changes never destroy data
+    snew = ""
+    if (srec) {
+      ki = (n > skeep) ? n - skeep + 1 : 1
+      for (i = ki; i <= n; i++) snew = (snew == "") ? sh[i] : snew " " sh[i]
+    }
     ld = (n > 0) ? sprintf("%.4f", sh[n] + 0) : "0.0000"
 
     printf "%d %d %d %s %.4f %.4f %d %d %s %s %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, snew
@@ -213,8 +231,14 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
 )"
 
 # ── Cost sparkline: persist state on turn boundary ────────────────────────────
+# A recorded turn must produce deltas — the guard keeps a failed awk/jq tick
+# from wiping the accumulated history (same class as the notification sentinel)
 if [ "$spark_new" = 1 ]; then
-  printf '%s\n%s\n%s\n' "$turn_ts" "$total_cost_raw" "$spark_newhist" > "$hist_file"
+  if [ "$spark_record" = 0 ] || [ -n "$spark_newhist" ]; then
+    # On re-init (record=0) keep the previously stored deltas — only the
+    # baseline was missing/corrupt, the history itself is still valid
+    printf '%s\n%s\n%s\n' "$turn_ts" "$total_cost_raw" "${spark_newhist:-$spark_hist}" > "$hist_file"
+  fi
 fi
 
 # ── Color for usage level ─────────────────────────────────────────────────────
@@ -335,10 +359,8 @@ if [ "$SPARK_MODE" != "none" ]; then
       fi
       [ $((${#_lv} % 2)) -eq 1 ] && _lv="0$_lv"
       while [ "$_i" -lt "${#_lv}" ]; do
-        # Halve 0-8 levels to 0-4 per braille/octant column (0→0, 1-2→1, … 7-8→4)
-        _a=$(((${_lv:_i:1} + 1) / 2))
-        _b=$(((${_lv:_i+1:1} + 1) / 2))
-        _s="${_s}${_tbl[_a*5+_b]}"
+        # Digits are already 0-4 per column (awk quantizes to lmax per mode)
+        _s="${_s}${_tbl[${_lv:_i:1}*5+${_lv:_i+1:1}]}"
         _i=$((_i + 2))
       done
       _spark_cells=$((${#_lv} / 2))

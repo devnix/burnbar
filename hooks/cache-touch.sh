@@ -8,7 +8,9 @@ CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 key="${CLAUDE_CODE_SESSION_ID:0:8}"
 printf -v now '%(%s)T' -1
 printf '%s\n' "$now" > "$CONFIG_DIR/.cache-ts-$key"
-case "$1" in
-  Stop) printf '%s\n' "$now" > "$CONFIG_DIR/.turn-ts-$key" ;;
-esac
+# Turn boundary marker (Stop = Claude finished responding) — the statusline
+# snapshots the cumulative cost when it changes. The $RANDOM suffix keeps
+# markers distinct even for turns ending within the same second (the marker
+# is an opaque string to the statusline).
+[ "$1" = "Stop" ] && printf '%s\n' "$now-$RANDOM" > "$CONFIG_DIR/.turn-ts-$key"
 exit 0

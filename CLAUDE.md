@@ -133,9 +133,16 @@ Performance: the notification path runs once per cache period (not every second)
 
 ### State File (`~/.claude/.cost-hist-<session_prefix>`)
 
-Three lines: turn marker timestamp, cost baseline (raw float), space-separated deltas (`%.4f`). Only rewritten on turn boundaries — not on every tick. Cleared on `SessionStart`, stale files cleaned with the other `.cache-*` files.
+Three lines: turn marker (opaque string, `<epoch>-$RANDOM` so two turns ending in the same second still differ), cost baseline (raw float), space-separated deltas (`%.4f`). Only rewritten on turn boundaries — not on every tick. Cleared on `SessionStart`, stale files cleaned with the other `.cache-*` files.
 
-The first prompt only initializes the baseline (no delta recorded — there's no previous turn to measure), so the sparkline appears after the second prompt.
+The first completed turn only initializes the baseline (no delta recorded — there's no previous turn to measure), so the sparkline appears after the second turn completes.
+
+Robustness invariants:
+
+- **Keep cap**: the persisted delta list keeps `max(32, render_window)` turns, never just the render window — switching to a narrower mode/width must not destroy history.
+- **Persist guard**: when a delta was recorded (`spark_record=1`), the file is only rewritten if awk actually produced a history (`spark_newhist` non-empty) — a failed awk/jq on a boundary tick must not wipe the history (same bug class as the notification sentinel).
+- **Baseline validation**: a corrupt/empty baseline line is treated as re-init (baseline rewritten, no delta recorded) — otherwise the next delta would swallow the entire session cost.
+- **`BURNBAR_SPARK_WIDTH` validation**: empty/zero/non-numeric falls back to 8.
 
 ### Rendering
 
@@ -143,7 +150,7 @@ The sparkline always renders at `SPARK_WIDTH` cells — unused cells are padded 
 
 The `{delta}` tag shows the last turn's cost as a labeled value (e.g., `delta:$0.0312`). It is extracted as the last element of the sparkline history array in the shared awk call and output before `spark_newhist` — `spark_newhist` must remain the last field in `read` because it contains spaces.
 
-Levels are computed in the existing single awk call (0–8, scaled to the window max; nonzero deltas floor at 1) and emitted as a digit string — awk never handles multibyte chars. Bash maps digit pairs to characters via hardcoded 25-entry lookup tables (`left_level*5 + right_level`, levels halved 0–8 → 0–4 per column):
+Levels are quantized in the existing single awk call at the mode's native resolution (`lmax`: 0–8 for blocks, 0–4 per column for braille/octant), scaled to the window max with nonzero deltas flooring at 1, and emitted as a digit string — awk owns all numeric scaling, bash does pure table lookup on the digits. Braille/octant index hardcoded 25-entry tables with `left_level*5 + right_level`:
 
 - **Braille** (U+2800 + column masks) — universal font support, default.
 - **Octants** (Unicode 16, U+1CD00 block + classic quadrants/eighth-blocks for the patterns Unicode excluded from it) — solid 2×4 blocks, auto-selected on Ghostty/Kitty (both render them natively without font support).
