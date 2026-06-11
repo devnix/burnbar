@@ -6,11 +6,11 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ## Features
 
+- **Cache TTL countdown** ⭐ — progress bar + `MM:SS` timer tracking the 5-minute prompt cache window. When half the time is gone, Burnbar fires a notification using Claude Code's own notification settings (terminal bell, iTerm2, Ghostty, Kitty — whatever you have configured). No more paying to re-warm a cache you didn't know had expired.
 - **Context window progress bar** with color gradient (green → yellow → red)
 - **Partial block characters** (▏▎▍▌▋▊▉) for smooth, sub-cell precision
 - **Token count** showing current context size, color-matched to usage level
 - **Cost tracking** — per-message input cost estimate and cumulative session total
-- **Cache TTL countdown** — progress bar + `MM:SS` timer tracking the 5-minute prompt cache (green → yellow → red)
 - **Model-aware pricing** — auto-detects Opus/Sonnet/Haiku and applies correct rates
 - **user@host:cwd** header line for quick orientation
 - **Zero configuration** — installs and configures itself automatically
