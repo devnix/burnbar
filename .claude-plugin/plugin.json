@@ -1,7 +1,7 @@
 {
   "name": "burnbar",
   "displayName": "Burnbar — Claude Code Statusline",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Rich statusline for Claude Code with context window progress bar, token usage, cost tracking, and model info. Watch your tokens burn.",
   "author": {
     "name": "devnix",
