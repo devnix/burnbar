@@ -493,6 +493,15 @@ _user="${_user//\\/\\\\}"
 _host="${_host//\\/\\\\}"
 _cwd="${_cwd//\\/\\\\}"
 _model="${_model//\\/\\\\}"
+case "$current_effort" in
+  low)    _effort_icon="○" ;;
+  medium) _effort_icon="◐" ;;
+  high)   _effort_icon="●" ;;
+  xhigh)  _effort_icon="◉" ;;
+  max)    _effort_icon="◈" ;;
+  *)      _effort_icon="" ;;
+esac
+[ -n "$_effort_icon" ] && _model="${_model} \033[38;2;215;119;87m${_effort_icon}\033[0m"
 
 _default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}  {spark}  {delta}  {monthly}  {daily}'
 _out="${BURNBAR_FORMAT:-$_default_fmt}"
