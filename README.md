@@ -115,7 +115,7 @@ export BURNBAR_FORMAT='{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}'
 
 ### `BURNBAR_BAR_WIDTH`
 
-Progress bar width in terminal cells. Default: `30`.
+Progress bar width in terminal cells. Default: `20`.
 
 ```bash
 export BURNBAR_BAR_WIDTH=20
@@ -156,7 +156,7 @@ Each workspace gets its own cache timer. On session start, the cache is cleared 
 
 ### `BURNBAR_CACHE_WIDTH`
 
-Cache progress bar width in terminal cells. Default: `10`.
+Cache progress bar width in terminal cells. Default: `8`.
 
 ```bash
 export BURNBAR_CACHE_WIDTH=15

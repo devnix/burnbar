@@ -4,8 +4,8 @@
 #
 # Configuration via environment variables:
 #   BURNBAR_FORMAT      — format string with {tag} placeholders (see README for tags)
-#   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 30)
-#   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 10)
+#   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 20)
+#   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
 #   BURNBAR_MONTHLY_BUDGET — monthly spend budget in USD (0 = show spend only, no bar)
@@ -96,9 +96,9 @@ _host="${HOSTNAME%%.*}"
 _cwd="$cwd"
 
 # ── Cache timer: read timestamp before awk ────────────────────────────────────
-BAR_WIDTH="${BURNBAR_BAR_WIDTH:-30}"
+BAR_WIDTH="${BURNBAR_BAR_WIDTH:-20}"
 CACHE_TTL=300
-CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-10}"
+CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-8}"
 UNFILLED_BG="47"
 
 cache_key="${session_id:0:8}"
@@ -470,9 +470,9 @@ if [ -n "$spend_usd" ]; then
   else _mbg=42; _mfg=32; fi
   if [ "${BURNBAR_MONTHLY_BUDGET:-0}" != "0" ]; then
     _render_bar "$MONTHLY_BAR_WIDTH" "$monthly_filled" "$monthly_partial" "$_mfg" "$_mbg" 0
-    _monthly="\033[${_mfg}m\$${spend_usd}/\$${BURNBAR_MONTHLY_BUDGET}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
+    _monthly="mo:\033[${_mfg}m\$${spend_usd}/\$${BURNBAR_MONTHLY_BUDGET}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
   else
-    _monthly="\033[01;36m\$${spend_usd}\033[0m"
+    _monthly="mo:\033[01;36m\$${spend_usd}\033[0m"
   fi
 fi
 if [ -n "$daily_usd" ]; then
@@ -482,9 +482,9 @@ if [ -n "$daily_usd" ]; then
   else _dbg=42; _dfg=32; fi
   if [ "${BURNBAR_DAILY_BUDGET:-0}" != "0" ]; then
     _render_bar "$DAILY_BAR_WIDTH" "$daily_filled" "$daily_partial" "$_dfg" "$_dbg" 0
-    _daily="\033[${_dfg}m\$${daily_usd}/\$${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
+    _daily="day:\033[${_dfg}m\$${daily_usd}/\$${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
   else
-    _daily="\033[01;36m\$${daily_usd}\033[0m"
+    _daily="day:\033[01;36m\$${daily_usd}\033[0m"
   fi
 fi
 

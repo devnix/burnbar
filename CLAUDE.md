@@ -236,3 +236,17 @@ The script runs every 1 second. Minimize subprocess forks.
 ### Hook scripts must use `#!/bin/bash`
 
 Hooks are always invoked as `bash "script.sh"` from hooks.json. Using `#!/bin/sh` is misleading and forces unnecessary POSIX workarounds (e.g. `${VAR%${VAR#????????}}` instead of `${VAR:0:8}`). All hook scripts should use `#!/bin/bash` and bash substring syntax consistently.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
