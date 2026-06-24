@@ -8,9 +8,56 @@
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 10)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
+#   BURNBAR_MONTHLY_BUDGET — monthly spend budget in USD (0 = show spend only, no bar)
+#   BURNBAR_DAILY_BUDGET   — daily spend budget in USD (0 = show spend only, no bar)
 
 # Config dir — respects secondary Claude profiles (CLAUDE_CONFIG_DIR)
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+# ── Monthly + daily spend (30-min cache, ccusage via npx) ────────────────────
+MONTHLY_BAR_WIDTH=8
+DAILY_BAR_WIDTH=8
+SPEND_TTL=1800
+SPEND_MONTHLY_CACHE="${HOME}/.cache/burnbar-monthly-spend-${CONFIG_DIR##*/}"
+SPEND_DAILY_CACHE="${HOME}/.cache/burnbar-daily-spend-${CONFIG_DIR##*/}"
+SPEND_LOCK="${HOME}/.cache/burnbar-spend-${CONFIG_DIR##*/}.lock"
+
+_update_spend() {
+  local _m _d _ts _json _month _today
+  _m=$(date +%Y-%m); _d=$(date +%Y-%m-%d); printf -v _ts '%(%s)T' -1
+  _json=$(CLAUDE_CONFIG_DIR="$CONFIG_DIR" \
+            ${BURNBAR_CCUSAGE_CMD:-npx -y ccusage@latest} daily --json 2>/dev/null)
+  if [ -n "$_json" ]; then
+    read -r _month _today < <(printf '%s' "$_json" | jq -r --arg m "$_m" --arg d "$_d" '
+      [ (.daily // [])[]
+        | { p: .period,
+            c: ((.modelBreakdowns // [] | map(select(.modelName|test("^claude"))|.cost) | add) // 0) } ]
+      | "\([.[]|select(.p|startswith($m))|.c]|add // 0) \([.[]|select(.p==$d)|.c]|add // 0)"')
+    case "$_month" in ''|*[!0-9.]*)  ;;
+      *)
+        printf '%.2f|%d\n' "$_month" "$_ts" > "$SPEND_MONTHLY_CACHE"
+        printf '%.2f|%d\n' "${_today:-0}" "$_ts" > "$SPEND_DAILY_CACHE" ;;
+    esac
+  fi
+  rm -f "${SPEND_LOCK}"
+}
+
+spend_usd="" _spend_epoch=0 daily_usd="" _daily_epoch=0
+[ -f "${SPEND_MONTHLY_CACHE}" ] && IFS='|' read -r spend_usd  _spend_epoch < "${SPEND_MONTHLY_CACHE}"
+[ -f "${SPEND_DAILY_CACHE}"   ] && IFS='|' read -r daily_usd  _daily_epoch  < "${SPEND_DAILY_CACHE}"
+printf -v _spend_now '%(%s)T' -1
+_stale=$(( _spend_now - (_spend_epoch < _daily_epoch ? _spend_epoch : _daily_epoch) ))
+if [ "$_stale" -gt "$SPEND_TTL" ]; then
+  _spend_lock_ok=1
+  if [ -f "${SPEND_LOCK}" ]; then
+    _lock_mtime=$(stat -c %Y "${SPEND_LOCK}" 2>/dev/null) || _lock_mtime=0
+    [ "$(( _spend_now - _lock_mtime ))" -lt 300 ] && _spend_lock_ok=0
+  fi
+  if [ "$_spend_lock_ok" = 1 ]; then
+    touch "${SPEND_LOCK}"
+    _update_spend &
+  fi
+fi
 
 # ── Parse input (single jq call) ─────────────────────────────────────────────
 input=$(cat)
@@ -30,13 +77,16 @@ jq_out=$(jq -r '
 # ── Pricing + model family ────────────────────────────────────────────────────
 case "$model_id" in
   *opus*)
-    price_in=15.0; price_cw=18.75; price_cr=1.50; model_family="opus"
+    price_in=5.0;  price_cw=6.25; price_cr=0.50; model_family="opus";    model_known=1
     ;;
   *haiku*)
-    price_in=0.80; price_cw=1.0; price_cr=0.08; model_family="haiku"
+    price_in=1.0;  price_cw=1.25; price_cr=0.10; model_family="haiku";   model_known=1
     ;;
-  *sonnet*|*)
-    price_in=3.0; price_cw=3.75; price_cr=0.30; model_family="sonnet"
+  *sonnet*)
+    price_in=3.0;  price_cw=3.75; price_cr=0.30; model_family="sonnet";  model_known=1
+    ;;
+  *)
+    price_in=0;    price_cw=0;    price_cr=0;    model_family="unknown"; model_known=0
     ;;
 esac
 
@@ -172,7 +222,9 @@ _maybe_notify
 
 # ── All numeric computation (single awk call) ────────────────────────────────
 read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
-  cache_filled_full cache_partial_idx spark_levels last_delta spark_newhist <<< "$(
+  cache_filled_full cache_partial_idx spark_levels last_delta \
+  spend_pct monthly_filled monthly_partial \
+  daily_pct daily_filled daily_partial spark_newhist <<< "$(
   LC_NUMERIC=C awk -v pct="$used_pct" -v bw="$BAR_WIDTH" \
       -v it="$input_toks" -v cwt="$cw_toks" -v crt="$cr_toks" \
       -v pin="$price_in" -v pcw="$price_cw" -v pcr="$price_cr" \
@@ -180,6 +232,8 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
       -v rem="$remaining" -v ttl="$CACHE_TTL" -v cbw="$CACHE_BAR_WIDTH" \
       -v srec="$spark_record" -v sb="$spark_base" -v shist="$spark_hist" \
       -v smaxn="$spark_window" -v skeep="$spark_keep" -v lmax="$spark_lmax" \
+      -v sraw="${spend_usd:-0}" -v sbudget="${BURNBAR_MONTHLY_BUDGET:-0}" -v mbw="$MONTHLY_BAR_WIDTH" \
+      -v draw="${daily_usd:-0}" -v dbudget="${BURNBAR_DAILY_BUDGET:-0}"  -v dbw="$DAILY_BAR_WIDTH" \
   'BEGIN {
     pct_int = int(pct + 0.5)
 
@@ -235,7 +289,21 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
     }
     ld = (n > 0) ? sprintf("%.4f", sh[n] + 0) : "0.0000"
 
-    printf "%d %d %d %s %.4f %.4f %d %d %s %s %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, snew
+    spct = (sbudget > 0) ? sraw / sbudget * 100 : 0
+    mf = spct / 100 * mbw
+    if (mf > mbw) mf = mbw; if (mf < 0) mf = 0
+    mff = int(mf)
+    mpi = int((mf - mff) * 8)
+    if (mpi > 7) mpi = 7; if (mpi < 0) mpi = 0
+
+    dpct = (dbudget > 0) ? draw / dbudget * 100 : 0
+    df = dpct / 100 * dbw
+    if (df > dbw) df = dbw; if (df < 0) df = 0
+    dff = int(df)
+    dpi = int((df - dff) * 8)
+    if (dpi > 7) dpi = 7; if (dpi < 0) dpi = 0
+
+    printf "%d %d %d %s %.4f %.4f %d %d %s %s %.1f %d %d %.1f %d %d %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, spct, mff, mpi, dpct, dff, dpi, snew
   }'
 )"
 
@@ -301,7 +369,11 @@ _bar="$_bar_out"
 # ── Computed fields ───────────────────────────────────────────────────────────
 _pct="${used_pct_int}%"
 _ctx="ctx:\033[${level_bold}m${ctx_fmt}\033[00m"
-_next="next:\033[01;33m\$${current_cost}\033[00m"
+if [ "$model_known" = 1 ]; then
+  _next="next:\033[01;33m\$${current_cost}\033[00m"
+else
+  _next="next:\033[01;33m⚠ unknown model: ${model_id}\033[00m"
+fi
 _total="total:\033[01;31m\$${total_cost}\033[00m"
 _delta="delta:\033[01;36m\$${last_delta}\033[00m"
 
@@ -389,13 +461,40 @@ if [ "$SPARK_MODE" != "none" ]; then
   [ -n "$_s" ] && _spark="${_spark}\033[36;${UNFILLED_BG}m${_s}\033[0m"
 fi
 
+# ── Monthly + daily spend rendering ──────────────────────────────────────────
+_monthly="" _daily=""
+if [ -n "$spend_usd" ]; then
+  _mp="${spend_pct%%.*}"
+  if [ "${_mp:-0}" -ge 90 ] 2>/dev/null; then _mbg=41; _mfg=31
+  elif [ "${_mp:-0}" -ge 70 ] 2>/dev/null; then _mbg=43; _mfg=33
+  else _mbg=42; _mfg=32; fi
+  if [ "${BURNBAR_MONTHLY_BUDGET:-0}" != "0" ]; then
+    _render_bar "$MONTHLY_BAR_WIDTH" "$monthly_filled" "$monthly_partial" "$_mfg" "$_mbg" 0
+    _monthly="\033[${_mfg}m\$${spend_usd}/\$${BURNBAR_MONTHLY_BUDGET}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
+  else
+    _monthly="\033[01;36m\$${spend_usd}\033[0m"
+  fi
+fi
+if [ -n "$daily_usd" ]; then
+  _dp="${daily_pct%%.*}"
+  if [ "${_dp:-0}" -ge 90 ] 2>/dev/null; then _dbg=41; _dfg=31
+  elif [ "${_dp:-0}" -ge 70 ] 2>/dev/null; then _dbg=43; _dfg=33
+  else _dbg=42; _dfg=32; fi
+  if [ "${BURNBAR_DAILY_BUDGET:-0}" != "0" ]; then
+    _render_bar "$DAILY_BAR_WIDTH" "$daily_filled" "$daily_partial" "$_dfg" "$_dbg" 0
+    _daily="\033[${_dfg}m\$${daily_usd}/\$${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
+  else
+    _daily="\033[01;36m\$${daily_usd}\033[0m"
+  fi
+fi
+
 # ── Format string and substitution engine ─────────────────────────────────────
 _user="${_user//\\/\\\\}"
 _host="${_host//\\/\\\\}"
 _cwd="${_cwd//\\/\\\\}"
 _model="${_model//\\/\\\\}"
 
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}  {spark}  {delta}'
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}  {spark}  {delta}  {monthly}  {daily}'
 _out="${BURNBAR_FORMAT:-$_default_fmt}"
 
 _out="${_out//\{user\}/$_user}"
@@ -410,5 +509,7 @@ _out="${_out//\{total\}/$_total}"
 _out="${_out//\{spark\}/$_spark}"
 _out="${_out//\{cache\}/$_cache}"
 _out="${_out//\{delta\}/$_delta}"
+_out="${_out//\{monthly\}/$_monthly}"
+_out="${_out//\{daily\}/$_daily}"
 
 printf '%b' "$_out"
