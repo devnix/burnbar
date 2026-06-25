@@ -10,6 +10,9 @@
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
 #   BURNBAR_MONTHLY_BUDGET — monthly spend budget in USD (0 = show spend only, no bar)
 #   BURNBAR_DAILY_BUDGET   — daily spend budget in USD (0 = show spend only, no bar)
+#   BURNBAR_WRAP_SEP    — separator used at {wrap} when line fits (default: "  ")
+#   BURNBAR_COLS        — override terminal width for wrap decisions (default: auto via stty)
+#   BURNBAR_SEP         — group separator character used at {sep} (default: "│")
 
 # Config dir — respects secondary Claude profiles (CLAUDE_CONFIG_DIR)
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -17,7 +20,7 @@ CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 # ── Monthly + daily spend (30-min cache, ccusage via npx) ────────────────────
 MONTHLY_BAR_WIDTH=8
 DAILY_BAR_WIDTH=8
-SPEND_TTL=1800
+SPEND_TTL=300
 SPEND_MONTHLY_CACHE="${HOME}/.cache/burnbar-monthly-spend-${CONFIG_DIR##*/}"
 SPEND_DAILY_CACHE="${HOME}/.cache/burnbar-daily-spend-${CONFIG_DIR##*/}"
 SPEND_LOCK="${HOME}/.cache/burnbar-spend-${CONFIG_DIR##*/}.lock"
@@ -35,8 +38,8 @@ _update_spend() {
       | "\([.[]|select(.p|startswith($m))|.c]|add // 0) \([.[]|select(.p==$d)|.c]|add // 0)"')
     case "$_month" in ''|*[!0-9.]*)  ;;
       *)
-        printf '%.2f|%d\n' "$_month" "$_ts" > "$SPEND_MONTHLY_CACHE"
-        printf '%.2f|%d\n' "${_today:-0}" "$_ts" > "$SPEND_DAILY_CACHE" ;;
+        LC_NUMERIC=C printf '%.2f|%d\n' "$_month"      "$_ts" > "$SPEND_MONTHLY_CACHE"
+        LC_NUMERIC=C printf '%.2f|%d\n' "${_today:-0}" "$_ts" > "$SPEND_DAILY_CACHE" ;;
     esac
   fi
   rm -f "${SPEND_LOCK}"
@@ -175,10 +178,23 @@ if [ "$SPARK_MODE" != "none" ] && [ -n "$session_id" ]; then
   fi
 fi
 
+# ── Pty discovery (shared by notification and width detection) ────────────────
+#   Walks /proc tree to find the parent pty. Sets caller's _tty_dev via bash
+#   dynamic scoping — declare 'local _tty_dev=""' in the calling function.
+_find_tty() {
+  local _pid=$PPID _fd _n
+  while [ "${_pid:-0}" -gt 1 ] 2>/dev/null; do
+    for _n in 1 2 0; do
+      _fd=$(readlink "/proc/$_pid/fd/$_n" 2>/dev/null) || continue
+      case "$_fd" in /dev/pts/*|/dev/tty*) _tty_dev="$_fd"; return ;; esac
+    done
+    _pid=$(awk '{sub(/.*\) /, ""); print $2}' "/proc/$_pid/stat" 2>/dev/null) || break
+  done
+}
+
 # ── Cache half-time notification ──────────────────────────────────────────────
 #   Fires once per cache period when remaining crosses 50%.
 #   BURNBAR_NOTIFY: auto|osc9|osc99|osc777|bell|none
-#   Walks /proc tree to find parent pty (statusline has no /dev/tty).
 _maybe_notify() {
   [ "$has_cache" = 1 ] && [ "$remaining" -gt 0 ] && [ "$remaining" -le $((CACHE_TTL / 2)) ] || return 0
   local _notif_file="$CONFIG_DIR/.cache-notif-$cache_key"
@@ -186,12 +202,8 @@ _maybe_notify() {
     local _notif_ts; read -r _notif_ts < "$_notif_file" 2>/dev/null
     [ "$_notif_ts" = "$last" ] && return 0
   fi
-  local _tty_dev="" _pid=$PPID _fd
-  while [ "${_pid:-0}" -gt 1 ] 2>/dev/null; do
-    _fd=$(readlink "/proc/$_pid/fd/1" 2>/dev/null) || break
-    case "$_fd" in /dev/pts/*|/dev/tty*) _tty_dev="$_fd"; break ;; esac
-    _pid=$(awk '{sub(/.*\) /, ""); print $2}' "/proc/$_pid/stat" 2>/dev/null) || break
-  done
+  local _tty_dev=""
+  _find_tty
   [ -n "$_tty_dev" ] || return 0
   local _notif_msg _nm _sent=0
   printf -v _notif_msg 'Burnbar: cache 50%% — %d:%02d remaining' "$((remaining / 60))" "$((remaining % 60))"
@@ -219,6 +231,21 @@ _maybe_notify() {
   [ "$_sent" = 1 ] && printf '%s\n' "$last" > "$_notif_file"
 }
 _maybe_notify
+
+# ── Terminal column detection (for responsive wrap) ───────────────────────────
+#   Sets global _term_cols. Always reads from the pty (accurate on every resize).
+#   Override with BURNBAR_COLS=N to bypass pty detection.
+_detect_cols() {
+  _term_cols=80  # conservative fallback when pty walk fails — wraps rather than overflows
+  [ "${BURNBAR_COLS:-0}" -gt 0 ] 2>/dev/null && { _term_cols="$BURNBAR_COLS"; return; }
+  local _tty_dev="" _sz="" _cols=""
+  _find_tty
+  [ -n "$_tty_dev" ] || return
+  _sz=$(stty size < "$_tty_dev" 2>/dev/null)
+  _cols="${_sz##* }"
+  [ "${_cols:-0}" -gt 0 ] 2>/dev/null && _term_cols="$_cols"
+}
+
 
 # ── All numeric computation (single awk call) ────────────────────────────────
 read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
@@ -503,7 +530,7 @@ case "$current_effort" in
 esac
 [ -n "$_effort_icon" ] && _model="${_model} \033[38;2;215;119;87m${_effort_icon}\033[0m"
 
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}  {spark}  {delta}  {monthly}  {daily}'
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar}{wrap}{pct}{sep}{next}{sep}{total}{sep}cache: {cache}{sep}{delta} {spark}{sep}{monthly}{sep}{daily}'
 _out="${BURNBAR_FORMAT:-$_default_fmt}"
 
 _out="${_out//\{user\}/$_user}"
@@ -520,5 +547,31 @@ _out="${_out//\{cache\}/$_cache}"
 _out="${_out//\{delta\}/$_delta}"
 _out="${_out//\{monthly\}/$_monthly}"
 _out="${_out//\{daily\}/$_daily}"
+
+# ── Responsive wrap ───────────────────────────────────────────────────────────
+#   {wrap} — soft break: renders as BURNBAR_WRAP_SEP (default "  ") or \n
+#   {sep}  — group separator: renders as " │ " (BURNBAR_SEP char) or \n with no char
+#   Both tags are processed left-to-right in document order.
+if [[ "$_out" == *'{wrap}'* ]] || [[ "$_out" == *'{sep}'* ]]; then
+  _detect_cols
+  _wrap_inline="${BURNBAR_WRAP_SEP:-  }"
+  _sep_inline="\033[90m${BURNBAR_SEP:-│}\033[0m"
+  while [[ "$_out" == *'{wrap}'* ]] || [[ "$_out" == *'{sep}'* ]]; do
+    _bw="${_out%%\{wrap\}*}"; _bs="${_out%%\{sep\}*}"
+    if [[ "$_out" != *'{wrap}'* ]] || { [[ "$_out" == *'{sep}'* ]] && [ "${#_bs}" -lt "${#_bw}" ]; }; then
+      _before="$_bs"; _after="${_out#*\{sep\}}"; _inline="$_sep_inline"
+    else
+      _before="$_bw"; _after="${_out#*\{wrap\}}"; _inline="$_wrap_inline"
+    fi
+    _cur="${_before##*\\n}"
+    _nxt="${_after%%\{wrap\}*}"; _nxt="${_nxt%%\{sep\}*}"; _nxt="${_nxt%%\\n*}"
+    _stripped=$(printf '%s' "${_cur}${_inline}${_nxt}" | sed 's/\\033\[[0-9;]*[A-Za-z]//g')
+    if [ "${#_stripped}" -ge "$((_term_cols - 2))" ]; then
+      _out="${_before}\\n${_after}"
+    else
+      _out="${_before}${_inline}${_after}"
+    fi
+  done
+fi
 
 printf '%b' "$_out"
