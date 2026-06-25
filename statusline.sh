@@ -10,6 +10,8 @@
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
 #   BURNBAR_MONTHLY_BUDGET — monthly spend budget in USD (0 = show spend only, no bar)
 #   BURNBAR_DAILY_BUDGET   — daily spend budget in USD (0 = show spend only, no bar)
+#   BURNBAR_WEEKLY_BUDGET  — weekly spend budget in USD (0 = show spend only, no bar)
+#   BURNBAR_5H_WIDTH    — width of the 5h block time bar in cells (default: 8)
 #   BURNBAR_WRAP_SEP    — separator used at {wrap} when line fits (default: "  ")
 #   BURNBAR_COLS        — override terminal width for wrap decisions (default: auto via stty)
 #   BURNBAR_SEP         — group separator character used at {sep} (default: "│")
@@ -17,39 +19,65 @@
 # Config dir — respects secondary Claude profiles (CLAUDE_CONFIG_DIR)
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# ── Monthly + daily spend (30-min cache, ccusage via npx) ────────────────────
+# ── Monthly + daily + weekly spend, and 5h block (ccusage via npx, 5-min cache)
 MONTHLY_BAR_WIDTH=8
 DAILY_BAR_WIDTH=8
+WEEKLY_BAR_WIDTH=8
 SPEND_TTL=300
 SPEND_MONTHLY_CACHE="${HOME}/.cache/burnbar-monthly-spend-${CONFIG_DIR##*/}"
 SPEND_DAILY_CACHE="${HOME}/.cache/burnbar-daily-spend-${CONFIG_DIR##*/}"
+SPEND_WEEKLY_CACHE="${HOME}/.cache/burnbar-weekly-spend-${CONFIG_DIR##*/}"
+SPEND_BLOCK_CACHE="${HOME}/.cache/burnbar-block-${CONFIG_DIR##*/}"
 SPEND_LOCK="${HOME}/.cache/burnbar-spend-${CONFIG_DIR##*/}.lock"
 
 _update_spend() {
-  local _m _d _ts _json _month _today
+  local _m _d _w7 _ts _json _month _today _week7_usd _bj _bstart _bend _btoks
   _m=$(date +%Y-%m); _d=$(date +%Y-%m-%d); printf -v _ts '%(%s)T' -1
+  _w7=$(date -d '7 days ago' +%Y-%m-%d 2>/dev/null)
   _json=$(CLAUDE_CONFIG_DIR="$CONFIG_DIR" \
             ${BURNBAR_CCUSAGE_CMD:-npx -y ccusage@latest} daily --json 2>/dev/null)
   if [ -n "$_json" ]; then
-    read -r _month _today < <(printf '%s' "$_json" | jq -r --arg m "$_m" --arg d "$_d" '
+    read -r _month _today _week7_usd < <(printf '%s' "$_json" | jq -r --arg m "$_m" --arg d "$_d" --arg w7 "${_w7:-1970-01-01}" '
       [ (.daily // [])[]
         | { p: .period,
             c: ((.modelBreakdowns // [] | map(select(.modelName|test("^claude"))|.cost) | add) // 0) } ]
-      | "\([.[]|select(.p|startswith($m))|.c]|add // 0) \([.[]|select(.p==$d)|.c]|add // 0)"')
+      | "\([.[]|select(.p|startswith($m))|.c]|add // 0) \([.[]|select(.p==$d)|.c]|add // 0) \([.[]|select(.p >= $w7)|.c]|add // 0)"')
     case "$_month" in ''|*[!0-9.]*)  ;;
       *)
-        LC_NUMERIC=C printf '%.2f|%d\n' "$_month"      "$_ts" > "$SPEND_MONTHLY_CACHE"
-        LC_NUMERIC=C printf '%.2f|%d\n' "${_today:-0}" "$_ts" > "$SPEND_DAILY_CACHE" ;;
+        LC_NUMERIC=C printf '%.2f|%d\n' "$_month"           "$_ts" > "$SPEND_MONTHLY_CACHE"
+        LC_NUMERIC=C printf '%.2f|%d\n' "${_today:-0}"      "$_ts" > "$SPEND_DAILY_CACHE"
+        LC_NUMERIC=C printf '%.2f|%d\n' "${_week7_usd:-0}"  "$_ts" > "$SPEND_WEEKLY_CACHE" ;;
     esac
+  fi
+  _bj=$(CLAUDE_CONFIG_DIR="$CONFIG_DIR" \
+            ${BURNBAR_CCUSAGE_CMD:-npx -y ccusage@latest} blocks --active --json 2>/dev/null)
+  if [ -n "$_bj" ]; then
+    read -r _bstart _bend _btoks < <(printf '%s' "$_bj" | jq -r '
+      (.blocks // [] | map(select(.isActive)) | .[0]) as $b |
+      if $b == null then "0 0 0"
+      else
+        (($b.startTime | split(".")[0] + "Z" | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring) + " " +
+         ($b.endTime   | split(".")[0] + "Z" | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring) + " " +
+         ($b.totalTokens // 0 | tostring))
+      end')
+    if [ -n "$_bend" ] && [ "$_bend" -gt 0 ] 2>/dev/null; then
+      printf '%s|%s|%s|%d\n' "${_bstart:-0}" "$_bend" "${_btoks:-0}" "$_ts" > "$SPEND_BLOCK_CACHE"
+    fi
   fi
   rm -f "${SPEND_LOCK}"
 }
 
 spend_usd="" _spend_epoch=0 daily_usd="" _daily_epoch=0
-[ -f "${SPEND_MONTHLY_CACHE}" ] && IFS='|' read -r spend_usd  _spend_epoch < "${SPEND_MONTHLY_CACHE}"
-[ -f "${SPEND_DAILY_CACHE}"   ] && IFS='|' read -r daily_usd  _daily_epoch  < "${SPEND_DAILY_CACHE}"
+weekly_usd="" _weekly_ts=0 block_start_epoch="" block_end_epoch="" block_tokens="" _block_ts=0
+[ -f "${SPEND_MONTHLY_CACHE}" ] && IFS='|' read -r spend_usd         _spend_epoch  < "${SPEND_MONTHLY_CACHE}"
+[ -f "${SPEND_DAILY_CACHE}"   ] && IFS='|' read -r daily_usd         _daily_epoch  < "${SPEND_DAILY_CACHE}"
+[ -f "${SPEND_WEEKLY_CACHE}"  ] && IFS='|' read -r weekly_usd        _weekly_ts    < "${SPEND_WEEKLY_CACHE}"
+[ -f "${SPEND_BLOCK_CACHE}"   ] && IFS='|' read -r block_start_epoch block_end_epoch block_tokens _block_ts < "${SPEND_BLOCK_CACHE}"
 printf -v _spend_now '%(%s)T' -1
-_stale=$(( _spend_now - (_spend_epoch < _daily_epoch ? _spend_epoch : _daily_epoch) ))
+_stale_oldest=$(( _spend_epoch < _daily_epoch ? _spend_epoch : _daily_epoch ))
+[ "${_weekly_ts:-0}" -lt "$_stale_oldest" ] && _stale_oldest="${_weekly_ts:-0}"
+[ "${_block_ts:-0}"  -lt "$_stale_oldest" ] && _stale_oldest="${_block_ts:-0}"
+_stale=$(( _spend_now - _stale_oldest ))
 if [ "$_stale" -gt "$SPEND_TTL" ]; then
   _spend_lock_ok=1
   if [ -f "${SPEND_LOCK}" ]; then
@@ -102,6 +130,7 @@ _cwd="$cwd"
 BAR_WIDTH="${BURNBAR_BAR_WIDTH:-20}"
 CACHE_TTL=300
 CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-8}"
+FH_BAR_WIDTH="${BURNBAR_5H_WIDTH:-8}"
 UNFILLED_BG="47"
 
 cache_key="${session_id:0:8}"
@@ -247,11 +276,26 @@ _detect_cols() {
 }
 
 
+# ── 5h block timer: remaining time in the active billing window ───────────────
+_fh_remaining=0 _fh_duration=18000 _fh_reset="" _fh_has=0
+printf -v _fh_now '%(%s)T' -1
+if [ -n "$block_end_epoch" ] && [ "$block_end_epoch" -gt "$_fh_now" ] 2>/dev/null; then
+  _fh_remaining=$(( block_end_epoch - _fh_now ))
+  if [ -n "$block_start_epoch" ] && [ "$block_start_epoch" -gt 0 ] 2>/dev/null; then
+    _fh_duration=$(( block_end_epoch - block_start_epoch ))
+    [ "$_fh_duration" -le 0 ] && _fh_duration=18000
+  fi
+  printf -v _fh_reset '%(%H:%M)T' "$block_end_epoch"
+  _fh_has=1
+fi
+
 # ── All numeric computation (single awk call) ────────────────────────────────
 read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
   cache_filled_full cache_partial_idx spark_levels last_delta \
   spend_pct monthly_filled monthly_partial \
-  daily_pct daily_filled daily_partial spark_newhist <<< "$(
+  daily_pct daily_filled daily_partial \
+  fh_time_filled fh_time_partial weekly_pct weekly_filled weekly_partial \
+  spark_newhist <<< "$(
   LC_NUMERIC=C awk -v pct="$used_pct" -v bw="$BAR_WIDTH" \
       -v it="$input_toks" -v cwt="$cw_toks" -v crt="$cr_toks" \
       -v pin="$price_in" -v pcw="$price_cw" -v pcr="$price_cr" \
@@ -261,6 +305,8 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
       -v smaxn="$spark_window" -v skeep="$spark_keep" -v lmax="$spark_lmax" \
       -v sraw="${spend_usd:-0}" -v sbudget="${BURNBAR_MONTHLY_BUDGET:-0}" -v mbw="$MONTHLY_BAR_WIDTH" \
       -v draw="${daily_usd:-0}" -v dbudget="${BURNBAR_DAILY_BUDGET:-0}"  -v dbw="$DAILY_BAR_WIDTH" \
+      -v fhrem="$_fh_remaining" -v fhttl="$_fh_duration" -v fhbw="$FH_BAR_WIDTH" \
+      -v wraw="${weekly_usd:-0}" -v wbudget="${BURNBAR_WEEKLY_BUDGET:-0}" -v wbw="$WEEKLY_BAR_WIDTH" \
   'BEGIN {
     pct_int = int(pct + 0.5)
 
@@ -330,7 +376,20 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
     dpi = int((df - dff) * 8)
     if (dpi > 7) dpi = 7; if (dpi < 0) dpi = 0
 
-    printf "%d %d %d %s %.4f %.4f %d %d %s %s %.1f %d %d %.1f %d %d %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, spct, mff, mpi, dpct, dff, dpi, snew
+    if (fhttl > 0 && fhrem > 0) {
+      fhf = fhrem / fhttl * fhbw
+      if (fhf > fhbw) fhf = fhbw; if (fhf < 0) fhf = 0
+      fhff = int(fhf); fhpi = int((fhf - fhff) * 8)
+      if (fhpi > 7) fhpi = 7; if (fhpi < 0) fhpi = 0
+    } else { fhff = 0; fhpi = 0 }
+
+    wpct = (wbudget > 0) ? wraw / wbudget * 100 : 0
+    wf = wpct / 100 * wbw
+    if (wf > wbw) wf = wbw; if (wf < 0) wf = 0
+    wff = int(wf); wpi = int((wf - wff) * 8)
+    if (wpi > 7) wpi = 7; if (wpi < 0) wpi = 0
+
+    printf "%d %d %d %s %.4f %.4f %d %d %s %s %.1f %d %d %.1f %d %d %d %d %.1f %d %d %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, spct, mff, mpi, dpct, dff, dpi, fhff, fhpi, wpct, wff, wpi, snew
   }'
 )"
 
@@ -515,6 +574,38 @@ if [ -n "$daily_usd" ]; then
   fi
 fi
 
+# ── 5h block + weekly spend rendering ────────────────────────────────────────
+_5h="" _1w=""
+if [ "$_fh_has" = 1 ]; then
+  if [ "$_fh_remaining" -gt 7200 ] 2>/dev/null; then
+    _fh_fg="32"; _fh_bg="42"
+  elif [ "$_fh_remaining" -gt 3600 ] 2>/dev/null; then
+    _fh_fg="33"; _fh_bg="43"
+  else
+    _fh_fg="31"; _fh_bg="41"
+  fi
+  _fh_h=$(( _fh_remaining / 3600 ))
+  _fh_m=$(( (_fh_remaining % 3600) / 60 ))
+  printf -v _fh_countdown '%d:%02d' "$_fh_h" "$_fh_m"
+  _render_bar "$FH_BAR_WIDTH" "$fh_time_filled" "$fh_time_partial" "$_fh_fg" "$_fh_bg" 0
+  _5h="${_bar_out} \033[${_fh_fg}m${_fh_countdown}\033[0m ↺\033[${_fh_fg}m${_fh_reset}\033[0m"
+else
+  _render_bar "$FH_BAR_WIDTH" 0 0 "" "" 0
+  _5h="${_bar_out} \033[37m--:-- ↺--:--\033[0m"
+fi
+if [ -n "$weekly_usd" ]; then
+  _wp="${weekly_pct%%.*}"
+  if [ "${_wp:-0}" -ge 90 ] 2>/dev/null; then _wbg=41; _wfg=31
+  elif [ "${_wp:-0}" -ge 70 ] 2>/dev/null; then _wbg=43; _wfg=33
+  else _wbg=42; _wfg=32; fi
+  if [ "${BURNBAR_WEEKLY_BUDGET:-0}" != "0" ]; then
+    _render_bar "$WEEKLY_BAR_WIDTH" "$weekly_filled" "$weekly_partial" "$_wfg" "$_wbg" 0
+    _1w="wk:\033[${_wfg}m\$${weekly_usd}/\$${BURNBAR_WEEKLY_BUDGET}\033[0m ${_bar_out} \033[${_wfg}m${weekly_pct}%\033[0m"
+  else
+    _1w="wk:\033[01;36m\$${weekly_usd}\033[0m"
+  fi
+fi
+
 # ── Format string and substitution engine ─────────────────────────────────────
 _user="${_user//\\/\\\\}"
 _host="${_host//\\/\\\\}"
@@ -530,7 +621,7 @@ case "$current_effort" in
 esac
 [ -n "$_effort_icon" ] && _model="${_model} \033[38;2;215;119;87m${_effort_icon}\033[0m"
 
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar}{wrap}{pct}{sep}{next}{sep}{total}{sep}cache: {cache}{sep}{delta} {spark}{sep}{monthly}{sep}{daily}'
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar}{wrap}{pct}{sep}{next}{sep}{total}{sep}cache: {cache}{sep}{delta} {spark}{sep}{monthly}{sep}{daily}{sep}5h: {5h}{sep}{1w}'
 _out="${BURNBAR_FORMAT:-$_default_fmt}"
 
 _out="${_out//\{user\}/$_user}"
@@ -547,6 +638,8 @@ _out="${_out//\{cache\}/$_cache}"
 _out="${_out//\{delta\}/$_delta}"
 _out="${_out//\{monthly\}/$_monthly}"
 _out="${_out//\{daily\}/$_daily}"
+_out="${_out//\{5h\}/$_5h}"
+_out="${_out//\{1w\}/$_1w}"
 
 # ── Responsive wrap ───────────────────────────────────────────────────────────
 #   {wrap} — soft break: renders as BURNBAR_WRAP_SEP (default "  ") or \n
