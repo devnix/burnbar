@@ -59,6 +59,51 @@ case "$model_id" in
     ;;
 esac
 
+# ── Dynamic pricing (models.dev, daily cache; hardcoded table above is the
+#    offline fallback). Opt out with BURNBAR_OFFLINE=1. ──────────────────────
+# The refresh runs in the background and never blocks a render: the timestamp
+# file is claimed BEFORE fetching (same content-based-timestamp pattern as the
+# cache timer above), so a slow or failed fetch costs at most one attempt per
+# TTL and the previous cache stays in place.
+if [ "${BURNBAR_OFFLINE:-0}" != "1" ]; then
+  pricing_file="$CONFIG_DIR/.pricing-modelsdev.json"
+  pricing_ts_file="$CONFIG_DIR/.pricing-modelsdev-ts"
+  PRICING_TTL="${BURNBAR_PRICING_TTL:-86400}"
+  pnow=$(date +%s)
+  plast=0
+  if [ -f "$pricing_ts_file" ]; then
+    read -r plast < "$pricing_ts_file" 2>/dev/null
+    if ! [ "$plast" -gt 0 ] 2>/dev/null; then plast=0; fi
+  fi
+  if [ $((pnow - plast)) -ge "$PRICING_TTL" ]; then
+    printf '%s\n' "$pnow" > "$pricing_ts_file"
+    (
+      tmp=$(mktemp "$CONFIG_DIR/.pricing-modelsdev.XXXXXX") || exit 0
+      if curl -sfm 10 https://models.dev/api.json 2>/dev/null \
+          | jq '(.anthropic.models // {}) | map_values({
+                  in: .cost.input,
+                  cw: (.cost.cache_write // (.cost.input * 1.25)),
+                  cr: (.cost.cache_read  // (.cost.input * 0.1))
+                })' > "$tmp" 2>/dev/null \
+          && jq -e 'length > 0' "$tmp" >/dev/null 2>&1; then
+        mv -f "$tmp" "$pricing_file"
+      else
+        rm -f "$tmp"
+      fi
+    ) </dev/null >/dev/null 2>&1 &
+  fi
+  if [ -f "$pricing_file" ]; then
+    # model.id may carry Claude Code's 1M-context suffix, e.g. claude-fable-5[1m]
+    lookup_id="${model_id%\[1m\]}"
+    dyn=$(jq -r --arg id "$lookup_id" \
+      '.[$id] | if . and .in then "\(.in) \(.cw) \(.cr)" else empty end' \
+      "$pricing_file" 2>/dev/null)
+    if [ -n "$dyn" ]; then
+      read -r price_in price_cw price_cr <<< "$dyn"
+    fi
+  fi
+fi
+
 # ── Header ────────────────────────────────────────────────────────────────────
 _user="${USER:-$(whoami)}"
 _host="${HOSTNAME%%.*}"
