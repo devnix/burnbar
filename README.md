@@ -11,7 +11,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 - **Partial block characters** (▏▎▍▌▋▊▉) for smooth, sub-cell precision
 - **Token count** showing current context size, color-matched to usage level
 - **Cost tracking** — per-message input cost estimate and cumulative session total
-- **Model-aware pricing** — auto-detects Opus/Sonnet/Haiku and applies correct rates
+- **Model-aware pricing** — auto-detects Fable/Opus/Sonnet/Haiku (including legacy price tiers); rates refresh daily from [models.dev](https://models.dev) with a built-in offline fallback
 - **user@host:cwd** header line for quick orientation
 - **Zero configuration** — auto-configures on install; backs up any existing statusline
 
@@ -120,6 +120,20 @@ Progress bar width in terminal cells. Default: `30`.
 ```bash
 export BURNBAR_BAR_WIDTH=20
 ```
+
+### `BURNBAR_OFFLINE`
+
+Burnbar refreshes its pricing table from [models.dev](https://models.dev)
+at most once per day (background fetch, never blocks a render; the
+built-in table is the offline fallback). Set `BURNBAR_OFFLINE=1` to
+disable all network access and use only the built-in rates.
+
+```bash
+export BURNBAR_OFFLINE=1
+```
+
+`BURNBAR_PRICING_TTL` (seconds, default `86400`) controls the refresh
+interval.
 
 ### Setting env vars via Claude Code settings
 
