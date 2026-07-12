@@ -28,14 +28,33 @@ jq_out=$(jq -r '
 ' <<< "$input") && eval "$jq_out"
 
 # ── Pricing + model family ────────────────────────────────────────────────────
+# USD per MTok: input / cache write (1.25x) / cache read (0.1x).
+# Version-specific arms must come before the family catch-alls.
 case "$model_id" in
-  *opus*)
+  *fable*|*mythos*)
+    price_in=10.0; price_cw=12.50; price_cr=1.00; model_family="fable"
+    ;;
+  *opus-4-1*|*opus-4-2025*)
+    # Opus 4.1 / Opus 4 legacy $15 tier
     price_in=15.0; price_cw=18.75; price_cr=1.50; model_family="opus"
     ;;
-  *haiku*)
+  *opus*)
+    # Opus 4.5 and later
+    price_in=5.0; price_cw=6.25; price_cr=0.50; model_family="opus"
+    ;;
+  *haiku-3*)
     price_in=0.80; price_cw=1.0; price_cr=0.08; model_family="haiku"
     ;;
+  *haiku*)
+    # Haiku 4.5 and later
+    price_in=1.0; price_cw=1.25; price_cr=0.10; model_family="haiku"
+    ;;
+  *sonnet-5*)
+    # Introductory pricing through 2026-08-31; 3.0/3.75/0.30 afterwards
+    price_in=2.0; price_cw=2.50; price_cr=0.20; model_family="sonnet"
+    ;;
   *sonnet*|*)
+    # Sonnet 4.x, and the fallback for unrecognized models
     price_in=3.0; price_cw=3.75; price_cr=0.30; model_family="sonnet"
     ;;
 esac
