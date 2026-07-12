@@ -11,7 +11,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 - **Partial block characters** (▏▎▍▌▋▊▉) for smooth, sub-cell precision
 - **Token count** showing current context size, color-matched to usage level
 - **Cost tracking** — per-message input cost estimate and cumulative session total
-- **Model-aware pricing** — auto-detects Opus/Sonnet/Haiku and applies correct rates
+- **Model-aware pricing** — auto-detects Fable/Opus/Sonnet/Haiku (including legacy price tiers) and applies correct rates
 - **user@host:cwd** header line for quick orientation
 - **Zero configuration** — auto-configures on install; backs up any existing statusline
 
