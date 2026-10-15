@@ -1,0 +1,63 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Same image as local runs, so CI and local results match. -S error:
+      # the warnings today are SC2154 false positives from eval-assigned vars.
+      - name: shellcheck
+        run: >
+          docker run --rm -v "$PWD":/mnt:ro koalaman/shellcheck:stable -S error
+          statusline.sh hooks/*.sh tests/perf.sh
+      - name: JSON manifests parse
+        run: |
+          for f in .claude-plugin/*.json hooks/hooks.json; do jq empty "$f"; done
+      - name: Plugin versions match
+        run: |
+          p=$(jq -r .version .claude-plugin/plugin.json)
+          m=$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)
+          echo "plugin.json=$p marketplace.json=$m"
+          [ "$p" = "$m" ]
+
+  perf-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install strace
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q strace
+          # perf.sh only skips the fork gate without strace: fail loudly instead.
+          command -v strace
+      - name: perf (bash 5)
+        run: bash tests/perf.sh
+      - name: perf (bash 3.2)
+        run: >
+          docker run --rm -v "$PWD":/w:ro bash:3.2
+          bash -c 'apk add -q jq coreutils; bash /w/tests/perf.sh'
+
+  perf-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      # /bin/bash is the stock 3.2; `bash` in PATH can be Homebrew bash 5.
+      # Covers the BSD date/stat paths and the Keychain branch.
+      - name: perf (macOS /bin/bash)
+        env:
+          PERF_BASH: /bin/bash
+        run: /bin/bash tests/perf.sh
