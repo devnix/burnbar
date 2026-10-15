@@ -233,6 +233,7 @@ Run `tests/perf.sh` after any change to `statusline.sh`. It renders a hermetic f
 | + printf %(%s)T (no date +%s) | ~16 | ~17ms |
 | `{sep}` collapse/wrap via `$(printf \| sed)` per separator (regression) | ~56 | ~111ms |
 | + `_vis_width`, one measure per segment | ~6 + `_detect_cols` | ~25ms |
+| bash 3.2 (macOS): one `date` call per tick, clocks by arithmetic (was 12 forks) | 5 (bash 3.2), 4 (bash 5) | ~55–65ms on bash 3.2 |
 
 ## Known Bugs and Fixes
 

@@ -28,8 +28,28 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2) )
   _epoch()    { printf -v "$1" '%(%s)T' -1; }       # $1 = var
   _strftime() { printf -v "$1" "%($2)T" "$3"; }     # $1 = var, $2 = format, $3 = epoch
 else
-  _epoch()    { printf -v "$1" '%s' "$(date +%s)"; }
-  _strftime() { printf -v "$1" '%s' "$(date -r "$3" "+$2" 2>/dev/null || date -d "@$3" "+$2")"; }
+  # One date(1) call per tick (2 forks) reads the epoch, the local day and the
+  # UTC offset. The tick's day and any %H:%M are then computed by arithmetic;
+  # other formats and epochs still fork date(1).
+  _ref_epoch=""
+  _tick_ref() {
+    local _ref_off
+    read -r _ref_epoch _ref_day _ref_off <<< "$(date '+%s %Y-%m-%d %z')"
+    _ref_secs=$(( 10#${_ref_off:1:2} * 3600 + 10#${_ref_off:3:2} * 60 ))  # %z = +HHMM
+    [ "${_ref_off:0:1}" = "-" ] && _ref_secs=$(( -_ref_secs ))
+  }
+  _epoch() { [ -n "$_ref_epoch" ] || _tick_ref; printf -v "$1" '%s' "$_ref_epoch"; }
+  _strftime() {  # $1 = var, $2 = format, $3 = epoch
+    [ -n "$_ref_epoch" ] || _tick_ref
+    if [ "$2" = '%Y-%m-%d' ] && [ "$3" = "$_ref_epoch" ]; then
+      printf -v "$1" '%s' "$_ref_day"
+    elif [ "$2" = '%H:%M' ]; then  # uses the offset of now: wrong across a DST change
+      local _t=$(( ($3 + _ref_secs) % 86400 ))
+      printf -v "$1" '%02d:%02d' $(( _t / 3600 )) $(( _t % 3600 / 60 ))
+    else
+      printf -v "$1" '%s' "$(date -r "$3" "+$2" 2>/dev/null || date -d "@$3" "+$2")"
+    fi
+  }
 fi
 
 # Format string — resolved up front so data sources can skip work for tags the
@@ -232,8 +252,7 @@ if [ -f "$ts_file" ]; then
   read -r last < "$ts_file" 2>/dev/null
   if ! [ "$last" -gt 0 ] 2>/dev/null; then last=0; fi
   if [ "$last" -gt 0 ] 2>/dev/null; then
-    _epoch now
-    elapsed=$((now - last))
+    elapsed=$((_spend_now - last))
     remaining=$((CACHE_TTL - elapsed))
     [ "$remaining" -lt 0 ] && remaining=0
     has_cache=1
