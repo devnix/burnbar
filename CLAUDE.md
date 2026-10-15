@@ -1,5 +1,11 @@
 # Burnbar Development Notes
 
+## Verify Changes
+
+After each change, run `make`. The change is done only on a green `make` (exit 0). On red, fix the cause, or show the failing output to the user. Change a perf threshold only with the user's approval: the thresholds are the regression guard.
+
+`make` mirrors the Linux CI jobs. The macOS job (stock `/bin/bash` 3.2, BSD `date`/`stat`, the Keychain branch) runs only in CI: when a change touches these paths, tell the user.
+
 ## Release Workflow
 
 The plugin version is hardcoded in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` — the plugin system reads it from there, not from the git tag. Always bump the version in both files **before** tagging:
@@ -202,7 +208,7 @@ The script runs every 1 second. Minimize subprocess forks.
 
 ### Regression test
 
-Run `tests/perf.sh` after any change to `statusline.sh`. It renders a hermetic fixture (every data tag, no network) and fails on: forks per tick (needs `strace`), CPU time per tick against a budget (CPU, not wall time: wall time doubled under load and flaked), and super-linear scaling — 4x longer segments (wider bars, one escape per cell) and 4x more segments (repeated format body). Verified against two mutants: `sed` per segment (67 forks, 70 ms) and the extglob strip (×31 on segment length). Run it under bash 3.2 too: `docker run --rm -v "$PWD":/w:ro bash:3.2 bash -c 'apk add -q jq coreutils; bash /w/tests/perf.sh'`.
+`tests/perf.sh` runs in `make perf` (your bash) and `make perf-bash32` (bash 3.2 in Docker). It renders a hermetic fixture (every data tag, no network) and fails on: forks per tick (needs `strace`), CPU time per tick against a budget (CPU, not wall time: wall time doubled under load and flaked), and super-linear scaling — 4x longer segments (wider bars, one escape per cell) and 4x more segments (repeated format body). Verified against two mutants: `sed` per segment (67 forks, 70 ms) and the extglob strip (×31 on segment length).
 
 ### Patterns That Work
 

@@ -1,5 +1,7 @@
 name: tests
 
+# The steps call Makefile targets: `make` locally runs the same checks.
+
 on:
   push:
     branches: [main]
@@ -18,21 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Same image as local runs, so CI and local results match. -S error:
-      # the warnings today are SC2154 false positives from eval-assigned vars.
-      - name: shellcheck
-        run: >
-          docker run --rm -v "$PWD":/mnt:ro koalaman/shellcheck:stable -S error
-          statusline.sh hooks/*.sh tests/perf.sh
-      - name: JSON manifests parse
-        run: |
-          for f in .claude-plugin/*.json hooks/hooks.json; do jq empty "$f"; done
-      - name: Plugin versions match
-        run: |
-          p=$(jq -r .version .claude-plugin/plugin.json)
-          m=$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)
-          echo "plugin.json=$p marketplace.json=$m"
-          [ "$p" = "$m" ]
+      - run: make lint
 
   perf-linux:
     runs-on: ubuntu-latest
@@ -42,18 +30,14 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q strace
-          # perf.sh only skips the fork gate without strace: fail loudly instead.
-          command -v strace
       - name: perf (bash 5)
-        run: bash tests/perf.sh
+        run: make perf
       # Shared runners score the bash 3.2 segment-count ratio ~9.5-10x (6-7x
       # locally). 13 still catches the extglob-class regressions (~31-40x).
       - name: perf (bash 3.2)
         env:
           PERF_MAX_RATIO: 13
-        run: >
-          docker run --rm -v "$PWD":/w:ro bash:3.2
-          bash -c "apk add -q jq coreutils; PERF_MAX_RATIO=$PERF_MAX_RATIO bash /w/tests/perf.sh"
+        run: make perf-bash32
 
   perf-macos:
     runs-on: macos-latest
@@ -65,4 +49,4 @@ jobs:
         env:
           PERF_BASH: /bin/bash
           PERF_MAX_RATIO: 13  # see perf-linux bash 3.2
-        run: /bin/bash tests/perf.sh
+        run: make perf
