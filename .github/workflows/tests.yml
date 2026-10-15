@@ -46,10 +46,14 @@ jobs:
           command -v strace
       - name: perf (bash 5)
         run: bash tests/perf.sh
+      # Shared runners score the bash 3.2 segment-count ratio ~9.5-10x (6-7x
+      # locally). 13 still catches the extglob-class regressions (~31-40x).
       - name: perf (bash 3.2)
+        env:
+          PERF_MAX_RATIO: 13
         run: >
           docker run --rm -v "$PWD":/w:ro bash:3.2
-          bash -c 'apk add -q jq coreutils; bash /w/tests/perf.sh'
+          bash -c "apk add -q jq coreutils; PERF_MAX_RATIO=$PERF_MAX_RATIO bash /w/tests/perf.sh"
 
   perf-macos:
     runs-on: macos-latest
@@ -60,4 +64,5 @@ jobs:
       - name: perf (macOS /bin/bash)
         env:
           PERF_BASH: /bin/bash
+          PERF_MAX_RATIO: 13  # see perf-linux bash 3.2
         run: /bin/bash tests/perf.sh
