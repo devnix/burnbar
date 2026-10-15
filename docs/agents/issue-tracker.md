@@ -1,19 +1,18 @@
-# Issue tracker: Local Markdown
+# Issue tracker: GitHub Issues
 
-Issues and PRDs for this repo live as markdown files in `.scratch/`.
+Issues and PRDs for this repo live in GitHub Issues (`devnix/burnbar`). Use the `gh` CLI. Users outside the project also open issues here.
 
 ## Conventions
 
-- One feature per directory: `.scratch/<feature-slug>/`
-- The PRD is `.scratch/<feature-slug>/PRD.md`
-- Implementation issues are `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- A PRD is one issue. Its title starts with `PRD: `.
+- Implementation issues are separate issues. The first line of the body is `Part of #<PRD number>`.
+- Triage state is a label (see `triage-labels.md` for the role strings). Each issue has at most one triage label.
+- Conversation goes in issue comments (`gh issue comment <number>`).
 
 ## When a skill says "publish to the issue tracker"
 
-Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
+Run `gh issue create --title "<title>" --body-file <file> --label <triage label>`. Use the triage label that the skill asks for, or `needs-triage` when it asks for none. Report the issue URL to the user.
 
 ## When a skill says "fetch the relevant ticket"
 
-Read the file at the referenced path. The user will normally pass the path or the issue number directly.
+Run `gh issue view <number> --comments`. The user normally gives the issue number or URL.

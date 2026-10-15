@@ -293,7 +293,7 @@ Hooks are always invoked as `bash "script.sh"` from hooks.json. Using `#!/bin/sh
 
 ### Issue tracker
 
-Issues live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues (`gh`). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
