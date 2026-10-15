@@ -3,15 +3,18 @@
 # https://github.com/devnix/burnbar
 #
 # Configuration via environment variables:
-#   BURNBAR_FORMAT      — format string with {tag} placeholders (see README for tags)
+#   BURNBAR_FORMAT      — format string with {tag} placeholders (see README for tags).
+#                         {sep}/{wrap} are responsive separators; [[ ... ]] wraps an
+#                         optional group that survives iff ≥1 {tag} inside it is non-empty.
 #   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 20)
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
-#   BURNBAR_MONTHLY_BUDGET — monthly spend budget in USD (0 = show spend only, no bar)
-#   BURNBAR_DAILY_BUDGET   — daily spend budget in USD (0 = show spend only, no bar)
-#   BURNBAR_WEEKLY_BUDGET  — weekly spend budget in USD (0 = show spend only, no bar)
-#   BURNBAR_5H_WIDTH    — width of the 5h block time bar in cells (default: 8)
+#   BURNBAR_MONTHLY_BUDGET — monthly budget in the plan's currency, only used when the
+#                            plan reports no limit of its own (0 = no bar)
+#   BURNBAR_DAILY_BUDGET   — daily budget in the plan's currency (0 = show spend only, no bar)
+#   BURNBAR_WEEKLY_WIDTH   — width of the 7-day (1w) plan-usage meter bar in cells (default: 8)
+#   BURNBAR_5H_WIDTH    — width of the 5h plan-usage meter bar in cells (default: 8)
 #   BURNBAR_WRAP_SEP    — separator used at {wrap} when line fits (default: "  ")
 #   BURNBAR_COLS        — override terminal width for wrap decisions (default: auto via stty)
 #   BURNBAR_SEP         — group separator character used at {sep} (default: "│")
@@ -19,75 +22,159 @@
 # Config dir — respects secondary Claude profiles (CLAUDE_CONFIG_DIR)
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# ── Monthly + daily + weekly spend, and 5h block (ccusage via npx, 5-min cache)
+# Time helpers. bash >= 4.2 has a fork-free strftime builtin (printf %(...)T);
+# macOS ships bash 3.2, which falls back to date(1) (-r on BSD, -d on GNU).
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2) )); then
+  _epoch()    { printf -v "$1" '%(%s)T' -1; }       # $1 = var
+  _strftime() { printf -v "$1" "%($2)T" "$3"; }     # $1 = var, $2 = format, $3 = epoch
+else
+  _epoch()    { printf -v "$1" '%s' "$(date +%s)"; }
+  _strftime() { printf -v "$1" '%s' "$(date -r "$3" "+$2" 2>/dev/null || date -d "@$3" "+$2")"; }
+fi
+
+# Format string — resolved up front so data sources can skip work for tags the
+# format does not use.
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{next}{sep}{total}{sep}[[cache: {cache}]]{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
+_fmt="${BURNBAR_FORMAT:-$_default_fmt}"
+
+# ── Billed spend (claude.ai plan-usage endpoint, 5-min cache) ─────────────────
+#   Undocumented endpoint (the one /usage reads) — see ADR-0002. Reports the
+#   billed spend of the billing period (Enterprise usage, extra-usage credits)
+#   and the plan's limit. {daily} is derived from it: the latest reading minus
+#   the last reading taken before today's midnight. Only fetched when the format
+#   contains {monthly} or {daily}. The 5h / 1w meters come from the JSON
+#   rate_limits fields instead.
 MONTHLY_BAR_WIDTH=8
 DAILY_BAR_WIDTH=8
-WEEKLY_BAR_WIDTH=8
-SPEND_TTL=300
-SPEND_MONTHLY_CACHE="${HOME}/.cache/burnbar-monthly-spend-${CONFIG_DIR##*/}"
-SPEND_DAILY_CACHE="${HOME}/.cache/burnbar-daily-spend-${CONFIG_DIR##*/}"
-SPEND_WEEKLY_CACHE="${HOME}/.cache/burnbar-weekly-spend-${CONFIG_DIR##*/}"
-SPEND_BLOCK_CACHE="${HOME}/.cache/burnbar-block-${CONFIG_DIR##*/}"
-SPEND_LOCK="${HOME}/.cache/burnbar-spend-${CONFIG_DIR##*/}.lock"
+WEEKLY_BAR_WIDTH="${BURNBAR_WEEKLY_WIDTH:-8}"
+PLAN_TTL=300
+PLAN_MAX_AGE=3600
+# Cache line: used|limit|currency|enabled|epoch|day_baseline|day|daily
+PLAN_CACHE="${HOME}/.cache/burnbar-plan-spend-${CONFIG_DIR##*/}"
+PLAN_LOCK="${HOME}/.cache/burnbar-plan-spend-${CONFIG_DIR##*/}.lock"
 
-_update_spend() {
-  local _m _d _w7 _ts _json _month _today _week7_usd _bj _bstart _bend _btoks
-  _m=$(date +%Y-%m); _d=$(date +%Y-%m-%d); printf -v _ts '%(%s)T' -1
-  _w7=$(date -d '7 days ago' +%Y-%m-%d 2>/dev/null)
-  _json=$(CLAUDE_CONFIG_DIR="$CONFIG_DIR" \
-            ${BURNBAR_CCUSAGE_CMD:-npx -y ccusage@latest} daily --json 2>/dev/null)
-  if [ -n "$_json" ]; then
-    read -r _month _today _week7_usd < <(printf '%s' "$_json" | jq -r --arg m "$_m" --arg d "$_d" --arg w7 "${_w7:-1970-01-01}" '
-      [ (.daily // [])[]
-        | { p: .period,
-            c: ((.modelBreakdowns // [] | map(select(.modelName|test("^claude"))|.cost) | add) // 0) } ]
-      | "\([.[]|select(.p|startswith($m))|.c]|add // 0) \([.[]|select(.p==$d)|.c]|add // 0) \([.[]|select(.p >= $w7)|.c]|add // 0)"')
-    case "$_month" in ''|*[!0-9.]*)  ;;
-      *)
-        LC_NUMERIC=C printf '%.2f|%d\n' "$_month"           "$_ts" > "$SPEND_MONTHLY_CACHE"
-        LC_NUMERIC=C printf '%.2f|%d\n' "${_today:-0}"      "$_ts" > "$SPEND_DAILY_CACHE"
-        LC_NUMERIC=C printf '%.2f|%d\n' "${_week7_usd:-0}"  "$_ts" > "$SPEND_WEEKLY_CACHE" ;;
-    esac
-  fi
-  _bj=$(CLAUDE_CONFIG_DIR="$CONFIG_DIR" \
-            ${BURNBAR_CCUSAGE_CMD:-npx -y ccusage@latest} blocks --active --json 2>/dev/null)
-  if [ -n "$_bj" ]; then
-    read -r _bstart _bend _btoks < <(printf '%s' "$_bj" | jq -r '
-      (.blocks // [] | map(select(.isActive)) | .[0]) as $b |
-      if $b == null then "0 0 0"
-      else
-        (($b.startTime | split(".")[0] + "Z" | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring) + " " +
-         ($b.endTime   | split(".")[0] + "Z" | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring) + " " +
-         ($b.totalTokens // 0 | tostring))
-      end')
-    if [ -n "$_bend" ] && [ "$_bend" -gt 0 ] 2>/dev/null; then
-      printf '%s|%s|%s|%d\n' "${_bstart:-0}" "$_bend" "${_btoks:-0}" "$_ts" > "$SPEND_BLOCK_CACHE"
+# Print Claude Code's OAuth credentials JSON. Linux: the credentials file. macOS:
+# the login Keychain, under the same service/account names Claude Code uses — a
+# "-<sha256(config dir)[:8]>" suffix when a non-default config dir is set.
+_read_credentials() {
+  if [[ "$OSTYPE" == darwin* ]]; then
+    local _svc="Claude Code-credentials" _dir="" _acct="${USER:-}"
+    if [ -n "${CLAUDE_SECURESTORAGE_CONFIG_DIR+x}" ]; then
+      _dir="$CLAUDE_SECURESTORAGE_CONFIG_DIR"
+    elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+      _dir="$CLAUDE_CONFIG_DIR"
     fi
+    [ -n "$_dir" ] && _svc="${_svc}-$(printf '%s' "$_dir" | shasum -a 256 | cut -c1-8)"
+    [[ "$_acct" =~ ^[a-zA-Z0-9._-]+$ ]] || _acct=claude-code-user
+    security find-generic-password -a "$_acct" -w -s "$_svc" 2>/dev/null
+  else
+    cat "$CONFIG_DIR/.credentials.json" 2>/dev/null
   fi
-  rm -f "${SPEND_LOCK}"
 }
 
-spend_usd="" _spend_epoch=0 daily_usd="" _daily_epoch=0
-weekly_usd="" _weekly_ts=0 block_start_epoch="" block_end_epoch="" block_tokens="" _block_ts=0
-[ -f "${SPEND_MONTHLY_CACHE}" ] && IFS='|' read -r spend_usd         _spend_epoch  < "${SPEND_MONTHLY_CACHE}"
-[ -f "${SPEND_DAILY_CACHE}"   ] && IFS='|' read -r daily_usd         _daily_epoch  < "${SPEND_DAILY_CACHE}"
-[ -f "${SPEND_WEEKLY_CACHE}"  ] && IFS='|' read -r weekly_usd        _weekly_ts    < "${SPEND_WEEKLY_CACHE}"
-[ -f "${SPEND_BLOCK_CACHE}"   ] && IFS='|' read -r block_start_epoch block_end_epoch block_tokens _block_ts < "${SPEND_BLOCK_CACHE}"
-printf -v _spend_now '%(%s)T' -1
-_stale_oldest=$(( _spend_epoch < _daily_epoch ? _spend_epoch : _daily_epoch ))
-[ "${_weekly_ts:-0}" -lt "$_stale_oldest" ] && _stale_oldest="${_weekly_ts:-0}"
-[ "${_block_ts:-0}"  -lt "$_stale_oldest" ] && _stale_oldest="${_block_ts:-0}"
-_stale=$(( _spend_now - _stale_oldest ))
-if [ "$_stale" -gt "$SPEND_TTL" ]; then
-  _spend_lock_ok=1
-  if [ -f "${SPEND_LOCK}" ]; then
-    _lock_mtime=$(stat -c %Y "${SPEND_LOCK}" 2>/dev/null) || _lock_mtime=0
-    [ "$(( _spend_now - _lock_mtime ))" -lt 300 ] && _spend_lock_ok=0
+_update_plan_spend() {
+  local _tok _json _used _limit _cur _on _ts _day _hms _h _m _s _sod _base _daily
+  local _p_used="" _p_limit _p_cur _p_on _p_epoch=0 _p_base="" _p_day="" _p_daily
+  _epoch _ts
+  # Read-only use of the token Claude Code keeps fresh. Never refresh it here:
+  # a refresh rotates the refresh token and can log Claude Code out. On a
+  # failure (401, 429, network, expired token) write nothing and keep the lock:
+  # the lock's 5-min age check in _spawn_refresh is the retry backoff.
+  _tok=$(_read_credentials | jq -r \
+           '.claudeAiOauth | select((.expiresAt // 0) > now * 1000) | .accessToken // empty' 2>/dev/null)
+  [ -n "$_tok" ] || return
+  # Header via stdin, not argv: argv is world-readable in /proc/*/cmdline.
+  _json=$(printf 'Authorization: Bearer %s\n' "$_tok" | curl -fsS -m 10 -H @- \
+            -H 'anthropic-beta: oauth-2025-04-20' \
+            https://api.anthropic.com/api/oauth/usage 2>/dev/null)
+  _tok=""
+  [ -n "$_json" ] || return
+  read -r _used _limit _cur _on < <(printf '%s' "$_json" | jq -r '
+    def amt(m; e): (m // 0) / pow(10; e // 2);
+    if (.spend.used.amount_minor | type) == "number" then
+      [ amt(.spend.used.amount_minor; .spend.used.exponent),
+        amt(.spend.limit.amount_minor; .spend.limit.exponent),
+        (.spend.used.currency // "USD"), (if .spend.enabled then 1 else 0 end) ]
+    elif (.extra_usage.used_credits | type) == "number" then
+      [ amt(.extra_usage.used_credits; .extra_usage.decimal_places),
+        amt(.extra_usage.monthly_limit; .extra_usage.decimal_places),
+        (.extra_usage.currency // "USD"), (if .extra_usage.is_enabled then 1 else 0 end) ]
+    else empty end | map(tostring) | join(" ")' 2>/dev/null)
+  # Persist guard: only overwrite the cache with a fully parsed reading.
+  case "$_used$_limit" in ''|*[!0-9.]*) return ;; esac
+  case "$_cur" in [A-Z][A-Z][A-Z]) ;; *) _cur=USD ;; esac
+
+  # Day baseline. Same day → keep it. New day → the previous reading, if it was
+  # taken yesterday (the spend between it and midnight lands on today); with no
+  # recent reading, today starts at the current amount.
+  [ -f "$PLAN_CACHE" ] && IFS='|' read -r _p_used _p_limit _p_cur _p_on _p_epoch _p_base _p_day _p_daily \
+    < "$PLAN_CACHE"
+  case "$_p_epoch" in ''|*[!0-9]*) _p_epoch=0 ;; esac
+  _strftime _day '%Y-%m-%d' "$_ts"
+  if [ "$_p_day" = "$_day" ] && [ -n "$_p_base" ]; then
+    _base="$_p_base"
+  else
+    _strftime _hms '%H %M %S' "$_ts"; read -r _h _m _s <<< "$_hms"
+    _sod=$(( _ts - 10#$_h * 3600 - 10#$_m * 60 - 10#$_s ))
+    if [ -n "$_p_used" ] && [ "$_p_epoch" -ge $(( _sod - 86400 )) ]; then
+      _base="$_p_used"
+    else
+      _base="$_used"
+    fi
   fi
-  if [ "$_spend_lock_ok" = 1 ]; then
-    touch "${SPEND_LOCK}"
-    _update_spend &
+  # The amount went down → a new billing period started: count today from zero.
+  read -r _base _daily < <(LC_NUMERIC=C awk -v u="$_used" -v b="$_base" \
+    'BEGIN { if (u + 0 < b + 0) b = 0; printf "%.2f %.2f\n", b, u - b }')
+
+  LC_NUMERIC=C printf '%.2f|%.2f|%s|%d|%d|%s|%s|%s\n' \
+    "$_used" "$_limit" "$_cur" "${_on:-0}" "$_ts" "$_base" "$_day" "$_daily" \
+    > "$PLAN_CACHE" && rm -f "${PLAN_LOCK}"
+}
+
+# Start a background refresh unless another one holds a fresh (<5 min) lock.
+# Redirect the job's stdout/stderr so it does not keep the statusline's stdout
+# pipe open: Claude Code reads stdout until EOF, which would otherwise block
+# until the (slow) refresh finishes.
+_spawn_refresh() {  # $1 = refresh function, $2 = lock file
+  local _lock_mtime
+  if [ -f "$2" ]; then
+    # GNU stat -c, BSD/macOS stat -f. An unreadable mtime must not disable the
+    # lock: that would turn a failing refresh into one request per tick.
+    _lock_mtime=$(stat -c %Y "$2" 2>/dev/null || stat -f %m "$2" 2>/dev/null)
+    case "$_lock_mtime" in ''|*[!0-9]*) return ;; esac
+    [ "$(( _spend_now - _lock_mtime ))" -lt 300 ] && return
   fi
+  # No lock, no spawn: without it nothing stops a new job every tick. macOS
+  # often has no ~/.cache.
+  [ -d "${2%/*}" ] || mkdir -p "${2%/*}" 2>/dev/null
+  touch "$2" 2>/dev/null || return
+  "$1" >/dev/null 2>&1 &
+}
+
+_epoch _spend_now
+plan_used="" plan_limit="" plan_cur="" plan_on=0 _plan_epoch=0 plan_base="" plan_day="" plan_daily=""
+# No credentials (API-key auth) → never fetch. macOS keeps them in the Keychain.
+if [[ "$_fmt" == *'{monthly}'* || "$_fmt" == *'{daily}'* ]] \
+   && { [[ "$OSTYPE" == darwin* ]] || [ -f "$CONFIG_DIR/.credentials.json" ]; }; then
+  [ -f "${PLAN_CACHE}" ] && IFS='|' read -r plan_used plan_limit plan_cur plan_on _plan_epoch \
+    plan_base plan_day plan_daily < "${PLAN_CACHE}"
+  case "$_plan_epoch" in ''|*[!0-9]*) _plan_epoch=0 ;; esac
+  [ "$(( _spend_now - _plan_epoch ))" -gt "$PLAN_TTL" ] && _spawn_refresh _update_plan_spend "$PLAN_LOCK"
+fi
+
+# A reading older than PLAN_MAX_AGE is not shown. The plan's limit is the
+# monthly budget; BURNBAR_MONTHLY_BUDGET only applies when the plan has none.
+monthly_amt="" daily_amt="" monthly_budget="${BURNBAR_MONTHLY_BUDGET:-0}" spend_sym='$'
+if [ -n "$plan_used" ] && [ "$(( _spend_now - _plan_epoch ))" -le "$PLAN_MAX_AGE" ]; then
+  monthly_amt="$plan_used"
+  [ "$plan_limit" != "0.00" ] && monthly_budget="${plan_limit%.00}"
+  _strftime _today '%Y-%m-%d' "$_spend_now"
+  # Past midnight but not refreshed yet → nothing spent today so far.
+  if [ "$plan_day" = "$_today" ] && [ -n "$plan_daily" ]; then daily_amt="$plan_daily"; else daily_amt="0.00"; fi
+  case "$plan_cur" in
+    USD) spend_sym='$' ;; EUR) spend_sym='€' ;; GBP) spend_sym='£' ;;
+    *)   spend_sym="${plan_cur} " ;;
+  esac
 fi
 
 # ── Parse input (single jq call) ─────────────────────────────────────────────
@@ -102,7 +189,11 @@ jq_out=$(jq -r '
   "cr_toks=" + ((if .context_window.current_usage then .context_window.current_usage.cache_read_input_tokens // 0 else 0 end) | @sh),
   "total_cost_raw=" + ((.cost.total_cost_usd // 0) | @sh),
   "session_id=" + ((.session_id // "") | @sh),
-  "current_effort=" + ((.effort.level // "") | @sh)
+  "current_effort=" + ((.effort.level // "") | @sh),
+  "fh_pct="   + ((.rate_limits.five_hour.used_percentage // "") | @sh),
+  "fh_reset=" + ((.rate_limits.five_hour.resets_at       // "") | @sh),
+  "sd_pct="   + ((.rate_limits.seven_day.used_percentage // "") | @sh),
+  "sd_reset=" + ((.rate_limits.seven_day.resets_at       // "") | @sh)
 ' <<< "$input") && eval "$jq_out"
 
 # ── Pricing + model family ────────────────────────────────────────────────────
@@ -141,7 +232,7 @@ if [ -f "$ts_file" ]; then
   read -r last < "$ts_file" 2>/dev/null
   if ! [ "$last" -gt 0 ] 2>/dev/null; then last=0; fi
   if [ "$last" -gt 0 ] 2>/dev/null; then
-    printf -v now '%(%s)T' -1
+    _epoch now
     elapsed=$((now - last))
     remaining=$((CACHE_TTL - elapsed))
     [ "$remaining" -lt 0 ] && remaining=0
@@ -276,25 +367,12 @@ _detect_cols() {
 }
 
 
-# ── 5h block timer: remaining time in the active billing window ───────────────
-_fh_remaining=0 _fh_duration=18000 _fh_reset="" _fh_has=0
-printf -v _fh_now '%(%s)T' -1
-if [ -n "$block_end_epoch" ] && [ "$block_end_epoch" -gt "$_fh_now" ] 2>/dev/null; then
-  _fh_remaining=$(( block_end_epoch - _fh_now ))
-  if [ -n "$block_start_epoch" ] && [ "$block_start_epoch" -gt 0 ] 2>/dev/null; then
-    _fh_duration=$(( block_end_epoch - block_start_epoch ))
-    [ "$_fh_duration" -le 0 ] && _fh_duration=18000
-  fi
-  printf -v _fh_reset '%(%H:%M)T' "$block_end_epoch"
-  _fh_has=1
-fi
-
 # ── All numeric computation (single awk call) ────────────────────────────────
 read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
   cache_filled_full cache_partial_idx spark_levels last_delta \
   spend_pct monthly_filled monthly_partial \
   daily_pct daily_filled daily_partial \
-  fh_time_filled fh_time_partial weekly_pct weekly_filled weekly_partial \
+  fh_filled fh_partial sd_filled sd_partial \
   spark_newhist <<< "$(
   LC_NUMERIC=C awk -v pct="$used_pct" -v bw="$BAR_WIDTH" \
       -v it="$input_toks" -v cwt="$cw_toks" -v crt="$cr_toks" \
@@ -303,10 +381,10 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
       -v rem="$remaining" -v ttl="$CACHE_TTL" -v cbw="$CACHE_BAR_WIDTH" \
       -v srec="$spark_record" -v sb="$spark_base" -v shist="$spark_hist" \
       -v smaxn="$spark_window" -v skeep="$spark_keep" -v lmax="$spark_lmax" \
-      -v sraw="${spend_usd:-0}" -v sbudget="${BURNBAR_MONTHLY_BUDGET:-0}" -v mbw="$MONTHLY_BAR_WIDTH" \
-      -v draw="${daily_usd:-0}" -v dbudget="${BURNBAR_DAILY_BUDGET:-0}"  -v dbw="$DAILY_BAR_WIDTH" \
-      -v fhrem="$_fh_remaining" -v fhttl="$_fh_duration" -v fhbw="$FH_BAR_WIDTH" \
-      -v wraw="${weekly_usd:-0}" -v wbudget="${BURNBAR_WEEKLY_BUDGET:-0}" -v wbw="$WEEKLY_BAR_WIDTH" \
+      -v sraw="${monthly_amt:-0}" -v sbudget="${monthly_budget:-0}" -v mbw="$MONTHLY_BAR_WIDTH" \
+      -v draw="${daily_amt:-0}" -v dbudget="${BURNBAR_DAILY_BUDGET:-0}"  -v dbw="$DAILY_BAR_WIDTH" \
+      -v fhpct="${fh_pct:-0}" -v fhbw="$FH_BAR_WIDTH" \
+      -v sdpct="${sd_pct:-0}" -v sdbw="$WEEKLY_BAR_WIDTH" \
   'BEGIN {
     pct_int = int(pct + 0.5)
 
@@ -376,20 +454,18 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
     dpi = int((df - dff) * 8)
     if (dpi > 7) dpi = 7; if (dpi < 0) dpi = 0
 
-    if (fhttl > 0 && fhrem > 0) {
-      fhf = fhrem / fhttl * fhbw
-      if (fhf > fhbw) fhf = fhbw; if (fhf < 0) fhf = 0
-      fhff = int(fhf); fhpi = int((fhf - fhff) * 8)
-      if (fhpi > 7) fhpi = 7; if (fhpi < 0) fhpi = 0
-    } else { fhff = 0; fhpi = 0 }
+    # 5h / 1w plan-usage meters: used_percentage (0-100) drives a filling bar
+    fhf = fhpct / 100 * fhbw
+    if (fhf > fhbw) fhf = fhbw; if (fhf < 0) fhf = 0
+    fhff = int(fhf); fhpi = int((fhf - fhff) * 8)
+    if (fhpi > 7) fhpi = 7; if (fhpi < 0) fhpi = 0
 
-    wpct = (wbudget > 0) ? wraw / wbudget * 100 : 0
-    wf = wpct / 100 * wbw
-    if (wf > wbw) wf = wbw; if (wf < 0) wf = 0
-    wff = int(wf); wpi = int((wf - wff) * 8)
-    if (wpi > 7) wpi = 7; if (wpi < 0) wpi = 0
+    sdf = sdpct / 100 * sdbw
+    if (sdf > sdbw) sdf = sdbw; if (sdf < 0) sdf = 0
+    sdff = int(sdf); sdpi = int((sdf - sdff) * 8)
+    if (sdpi > 7) sdpi = 7; if (sdpi < 0) sdpi = 0
 
-    printf "%d %d %d %s %.4f %.4f %d %d %s %s %.1f %d %d %.1f %d %d %d %d %.1f %d %d %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, spct, mff, mpi, dpct, dff, dpi, fhff, fhpi, wpct, wff, wpi, snew
+    printf "%d %d %d %s %.4f %.4f %d %d %s %s %.1f %d %d %.1f %d %d %d %d %d %d %s", pct_int, ff, pi, cfmt, cost, tc, cff, cpi, slv, ld, spct, mff, mpi, dpct, dff, dpi, fhff, fhpi, sdff, sdpi, snew
   }'
 )"
 
@@ -549,60 +625,70 @@ fi
 
 # ── Monthly + daily spend rendering ──────────────────────────────────────────
 _monthly="" _daily=""
-if [ -n "$spend_usd" ]; then
+if [ -n "$monthly_amt" ]; then
   _mp="${spend_pct%%.*}"
   if [ "${_mp:-0}" -ge 90 ] 2>/dev/null; then _mbg=41; _mfg=31
   elif [ "${_mp:-0}" -ge 70 ] 2>/dev/null; then _mbg=43; _mfg=33
   else _mbg=42; _mfg=32; fi
-  if [ "${BURNBAR_MONTHLY_BUDGET:-0}" != "0" ]; then
+  if [ "${monthly_budget:-0}" != "0" ]; then
     _render_bar "$MONTHLY_BAR_WIDTH" "$monthly_filled" "$monthly_partial" "$_mfg" "$_mbg" 0
-    _monthly="mo:\033[${_mfg}m\$${spend_usd}/\$${BURNBAR_MONTHLY_BUDGET}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
+    _monthly="mo:\033[${_mfg}m${spend_sym}${monthly_amt}/${spend_sym}${monthly_budget}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
   else
-    _monthly="mo:\033[01;36m\$${spend_usd}\033[0m"
+    _monthly="mo:\033[01;36m${spend_sym}${monthly_amt}\033[0m"
   fi
 fi
-if [ -n "$daily_usd" ]; then
+if [ -n "$daily_amt" ]; then
   _dp="${daily_pct%%.*}"
   if [ "${_dp:-0}" -ge 90 ] 2>/dev/null; then _dbg=41; _dfg=31
   elif [ "${_dp:-0}" -ge 70 ] 2>/dev/null; then _dbg=43; _dfg=33
   else _dbg=42; _dfg=32; fi
   if [ "${BURNBAR_DAILY_BUDGET:-0}" != "0" ]; then
     _render_bar "$DAILY_BAR_WIDTH" "$daily_filled" "$daily_partial" "$_dfg" "$_dbg" 0
-    _daily="day:\033[${_dfg}m\$${daily_usd}/\$${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
+    _daily="day:\033[${_dfg}m${spend_sym}${daily_amt}/${spend_sym}${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
   else
-    _daily="day:\033[01;36m\$${daily_usd}\033[0m"
+    _daily="day:\033[01;36m${spend_sym}${daily_amt}\033[0m"
   fi
 fi
 
-# ── 5h block + weekly spend rendering ────────────────────────────────────────
+# ── 5h + 1w plan-usage meters (from JSON rate_limits) ─────────────────────────
+#   Filling bar = % of the plan window consumed (green → yellow → red), plus a
+#   live countdown to reset and the absolute reset clock. Absent rate_limits
+#   (non-subscriber, or before the first API response) → empty string, so the
+#   [[ ]] group around the tag disappears entirely (no "--" placeholder).
 _5h="" _1w=""
-if [ "$_fh_has" = 1 ]; then
-  if [ "$_fh_remaining" -gt 7200 ] 2>/dev/null; then
-    _fh_fg="32"; _fh_bg="42"
-  elif [ "$_fh_remaining" -gt 3600 ] 2>/dev/null; then
-    _fh_fg="33"; _fh_bg="43"
-  else
-    _fh_fg="31"; _fh_bg="41"
+_now="$_spend_now"
+if [ -n "$fh_pct" ]; then
+  _fhp="${fh_pct%%.*}"
+  if [ "${_fhp:-0}" -ge 90 ] 2>/dev/null; then _fh_bg=41; _fh_fg=31
+  elif [ "${_fhp:-0}" -ge 70 ] 2>/dev/null; then _fh_bg=43; _fh_fg=33
+  else _fh_bg=42; _fh_fg=32; fi
+  _render_bar "$FH_BAR_WIDTH" "$fh_filled" "$fh_partial" "$_fh_fg" "$_fh_bg" 0
+  _5h="${_bar_out} \033[${_fh_fg}m${_fhp:-0}%\033[0m"
+  if [ -n "$fh_reset" ] && [ "${fh_reset%%.*}" -gt 0 ] 2>/dev/null; then
+    _strftime _fh_clock '%H:%M' "${fh_reset%%.*}"
+    _5h="${_5h} ↺\033[${_fh_fg}m${_fh_clock}\033[0m"
   fi
-  _fh_h=$(( _fh_remaining / 3600 ))
-  _fh_m=$(( (_fh_remaining % 3600) / 60 ))
-  printf -v _fh_countdown '%d:%02d' "$_fh_h" "$_fh_m"
-  _render_bar "$FH_BAR_WIDTH" "$fh_time_filled" "$fh_time_partial" "$_fh_fg" "$_fh_bg" 0
-  _5h="${_bar_out} \033[${_fh_fg}m${_fh_countdown}\033[0m ↺\033[${_fh_fg}m${_fh_reset}\033[0m"
-else
-  _render_bar "$FH_BAR_WIDTH" 0 0 "" "" 0
-  _5h="${_bar_out} \033[37m--:-- ↺--:--\033[0m"
 fi
-if [ -n "$weekly_usd" ]; then
-  _wp="${weekly_pct%%.*}"
-  if [ "${_wp:-0}" -ge 90 ] 2>/dev/null; then _wbg=41; _wfg=31
-  elif [ "${_wp:-0}" -ge 70 ] 2>/dev/null; then _wbg=43; _wfg=33
-  else _wbg=42; _wfg=32; fi
-  if [ "${BURNBAR_WEEKLY_BUDGET:-0}" != "0" ]; then
-    _render_bar "$WEEKLY_BAR_WIDTH" "$weekly_filled" "$weekly_partial" "$_wfg" "$_wbg" 0
-    _1w="wk:\033[${_wfg}m\$${weekly_usd}/\$${BURNBAR_WEEKLY_BUDGET}\033[0m ${_bar_out} \033[${_wfg}m${weekly_pct}%\033[0m"
-  else
-    _1w="wk:\033[01;36m\$${weekly_usd}\033[0m"
+if [ -n "$sd_pct" ]; then
+  _sdp="${sd_pct%%.*}"
+  if [ "${_sdp:-0}" -ge 90 ] 2>/dev/null; then _sd_bg=41; _sd_fg=31
+  elif [ "${_sdp:-0}" -ge 70 ] 2>/dev/null; then _sd_bg=43; _sd_fg=33
+  else _sd_bg=42; _sd_fg=32; fi
+  _render_bar "$WEEKLY_BAR_WIDTH" "$sd_filled" "$sd_partial" "$_sd_fg" "$_sd_bg" 0
+  _1w="${_bar_out} \033[${_sd_fg}m${_sdp:-0}%\033[0m"
+  if [ -n "$sd_reset" ] && [ "${sd_reset%%.*}" -gt 0 ] 2>/dev/null; then
+    _sd_secs=$(( ${sd_reset%%.*} - _now )); [ "$_sd_secs" -lt 0 ] && _sd_secs=0
+    # The 7-day window can span days; fall back to H:MM under 24h.
+    if [ "$_sd_secs" -ge 86400 ]; then
+      printf -v _sd_countdown '%dd %dh' $(( _sd_secs / 86400 )) $(( (_sd_secs % 86400) / 3600 ))
+    else
+      printf -v _sd_countdown '%d:%02d' $(( _sd_secs / 3600 )) $(( (_sd_secs % 3600) / 60 ))
+    fi
+    _1w="${_1w} \033[${_sd_fg}m${_sd_countdown}\033[0m"
+    if [ "$_sd_secs" -lt 86400 ]; then
+      _strftime _sd_clock '%H:%M' "${sd_reset%%.*}"
+      _1w="${_1w} ↺\033[${_sd_fg}m${_sd_clock}\033[0m"
+    fi
   fi
 fi
 
@@ -621,8 +707,31 @@ case "$current_effort" in
 esac
 [ -n "$_effort_icon" ] && _model="${_model} \033[38;2;215;119;87m${_effort_icon}\033[0m"
 
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar}{wrap}{pct}{sep}{next}{sep}{total}{sep}cache: {cache}{sep}{delta} {spark}{sep}{monthly}{sep}{daily}{sep}5h: {5h}{sep}{1w}'
-_out="${BURNBAR_FORMAT:-$_default_fmt}"
+_out="$_fmt"
+
+# ── Optional groups [[ ... ]] (before tag substitution) ───────────────────────
+#   A [[ ]] group survives iff at least one {tag} inside it expands to non-empty.
+#   Scanned while tags are still literal — each {xxx} maps to the bash var _xxx
+#   via indirect expansion (3.2-safe, no associative array). Brackets must be
+#   quoted in every glob: bare [ is a character-class metacharacter that would
+#   make the pattern silently never match (yet still pass bash -n).
+while [[ "$_out" == *'[['* ]]; do
+  _pre="${_out%%\[\[*}"      # text before the first [[
+  _rest="${_out#*\[\[}"      # text after the first [[
+  _grp="${_rest%%\]\]*}"     # group body (between [[ and ]])
+  _post="${_rest#*\]\]}"     # text after the matching ]]
+  _keep=0 _scan="$_grp"
+  while [[ "$_scan" == *'{'* ]]; do
+    _scan="${_scan#*\{}"; _tag="${_scan%%\}*}"; _scan="${_scan#*\}}"
+    _vn="_$_tag"
+    [ -n "${!_vn}" ] && { _keep=1; break; }
+  done
+  if [ "$_keep" = 1 ]; then
+    _out="${_pre}${_grp}${_post}"
+  else
+    _out="${_pre}${_post}"
+  fi
+done
 
 _out="${_out//\{user\}/$_user}"
 _out="${_out//\{host\}/$_host}"
@@ -641,6 +750,47 @@ _out="${_out//\{daily\}/$_daily}"
 _out="${_out//\{5h\}/$_5h}"
 _out="${_out//\{1w\}/$_1w}"
 
+# ── Collapse empty {sep} segments (before the wrap/sep loop) ───────────────────
+#   An emptied tag or a dropped [[ ]] group leaves an empty segment between two
+#   {sep} tokens (or a dangling {sep} at an edge). Split on the still-literal
+#   {sep}, drop blank segments, rejoin — so no doubled "│ │" or trailing "│".
+#   Fork-free. ANSI codes are stripped before the emptiness check so that
+#   color-wrapped empty tags don't masquerade as content.
+shopt -s extglob
+# Visible width of a segment: its length without the literal "\033[...X"
+# escape text (_vlen), and without blanks too (_vlen_nb, "has content").
+# Fork-free, linear in the number of escapes. Do not use
+# ${1//\\033\[*([0-9;])[A-Za-z]/}: extglob *() in a global substitution is
+# super-linear (~0.6 s on a 600-char line) and hangs the tick.
+_vis_width() {
+  local _r="$1" _vis="" _params
+  while [[ "$_r" == *'\033['* ]]; do
+    _vis+="${_r%%\\033\[*}"
+    _r="${_r#*\\033\[}"
+    _params="${_r%%[!0-9;]*}"
+    _r="${_r:${#_params}+1}"
+  done
+  _vis+="$_r"
+  _vlen=${#_vis}
+  _vis="${_vis// /}"
+  _vlen_nb=${#_vis}
+}
+if [[ "$_out" == *'{sep}'* ]]; then
+  _collapsed="" _crest="$_out"
+  while [[ "$_crest" == *'{sep}'* ]]; do
+    _seg="${_crest%%\{sep\}*}"; _crest="${_crest#*\{sep\}}"
+    _vis_width "$_seg"
+    if [ "$_vlen_nb" -gt 0 ]; then
+      [ -n "$_collapsed" ] && _collapsed="${_collapsed}{sep}${_seg}" || _collapsed="${_seg}"
+    fi
+  done
+  _vis_width "$_crest"
+  if [ "$_vlen_nb" -gt 0 ]; then
+    [ -n "$_collapsed" ] && _collapsed="${_collapsed}{sep}${_crest}" || _collapsed="${_crest}"
+  fi
+  _out="$_collapsed"
+fi
+
 # ── Responsive wrap ───────────────────────────────────────────────────────────
 #   {wrap} — soft break: renders as BURNBAR_WRAP_SEP (default "  ") or \n
 #   {sep}  — group separator: renders as " │ " (BURNBAR_SEP char) or \n with no char
@@ -649,21 +799,41 @@ if [[ "$_out" == *'{wrap}'* ]] || [[ "$_out" == *'{sep}'* ]]; then
   _detect_cols
   _wrap_inline="${BURNBAR_WRAP_SEP:-  }"
   _sep_inline="\033[90m${BURNBAR_SEP:-│}\033[0m"
-  while [[ "$_out" == *'{wrap}'* ]] || [[ "$_out" == *'{sep}'* ]]; do
-    _bw="${_out%%\{wrap\}*}"; _bs="${_out%%\{sep\}*}"
-    if [[ "$_out" != *'{wrap}'* ]] || { [[ "$_out" == *'{sep}'* ]] && [ "${#_bs}" -lt "${#_bw}" ]; }; then
-      _before="$_bs"; _after="${_out#*\{sep\}}"; _inline="$_sep_inline"
+  # Split into segments and the separators between them (document order).
+  _segs=() _kinds=() _rest="$_out"
+  while [[ "$_rest" == *'{wrap}'* ]] || [[ "$_rest" == *'{sep}'* ]]; do
+    _bw="${_rest%%\{wrap\}*}"; _bs="${_rest%%\{sep\}*}"
+    if [[ "$_rest" != *'{wrap}'* ]] || { [[ "$_rest" == *'{sep}'* ]] && [ "${#_bs}" -lt "${#_bw}" ]; }; then
+      _segs+=("$_bs"); _kinds+=(sep); _rest="${_rest#*\{sep\}}"
     else
-      _before="$_bw"; _after="${_out#*\{wrap\}}"; _inline="$_wrap_inline"
+      _segs+=("$_bw"); _kinds+=(wrap); _rest="${_rest#*\{wrap\}}"
     fi
-    _cur="${_before##*\\n}"
-    _nxt="${_after%%\{wrap\}*}"; _nxt="${_nxt%%\{sep\}*}"; _nxt="${_nxt%%\\n*}"
-    _stripped=$(printf '%s' "${_cur}${_inline}${_nxt}" | sed 's/\\033\[[0-9;]*[A-Za-z]//g')
-    if [ "${#_stripped}" -ge "$((_term_cols - 2))" ]; then
-      _out="${_before}\\n${_after}"
+  done
+  _segs+=("$_rest")
+  # Greedy layout: each separator renders inline when the current line, the
+  # separator and the next segment's first line fit in _term_cols - 2;
+  # otherwise it becomes a newline. Each segment is measured once.
+  _vis_width "$_sep_inline";  _sep_w=$_vlen
+  _vis_width "$_wrap_inline"; _wrap_w=$_vlen
+  _out="${_segs[0]}"
+  _vis_width "${_out##*\\n}"; _line_w=$_vlen
+  _i=0
+  while [ "$_i" -lt "${#_kinds[@]}" ]; do
+    _nxt="${_segs[$((_i + 1))]}"
+    if [ "${_kinds[$_i]}" = sep ]; then _inline="$_sep_inline" _in_w=$_sep_w
+    else _inline="$_wrap_inline" _in_w=$_wrap_w; fi
+    _vis_width "${_nxt%%\\n*}"; _head_w=$_vlen
+    if [ "$(( _line_w + _in_w + _head_w ))" -ge "$((_term_cols - 2))" ]; then
+      _out="${_out}\\n${_nxt}"; _line_w=0
     else
-      _out="${_before}${_inline}${_after}"
+      _out="${_out}${_inline}${_nxt}"; _line_w=$(( _line_w + _in_w ))
     fi
+    if [[ "$_nxt" == *'\n'* ]]; then
+      _vis_width "${_nxt##*\\n}"; _line_w=$_vlen
+    else
+      _line_w=$(( _line_w + _head_w ))
+    fi
+    _i=$((_i + 1))
   done
 fi
 

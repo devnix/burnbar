@@ -63,16 +63,44 @@ The user wants to know the current state (e.g., "Burnbar status", "is Burnbar ac
 
 The user wants to change the statusline layout (e.g., "hide costs", "show only bar", "use a custom format", "configure Burnbar format").
 
-Available tags: `{user}`, `{host}`, `{cwd}`, `{model}`, `{bar}`, `{pct}`, `{ctx}`, `{next}`, `{total}`, `{spark}`, `{delta}`, `{cache}`
+Available tags:
+
+| Tag | Description |
+|-----|-------------|
+| `{user}` | Username |
+| `{host}` | Hostname (short) |
+| `{cwd}` | Working directory |
+| `{model}` | Model name + effort icon |
+| `{bar}` | Context window progress bar |
+| `{pct}` | Context window percentage |
+| `{ctx}` | Context tokens (formatted, e.g. `ctx:32.0k`) |
+| `{next}` | Estimated cost of next message |
+| `{total}` | Total session cost |
+| `{cache}` | Cache TTL bar + `MM:SS` countdown |
+| `{spark}` | Per-turn cost sparkline |
+| `{delta}` | Last turn's cost |
+| `{monthly}` | Billed spend of the billing period + plan limit bar (claude.ai plan-usage endpoint) |
+| `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar shown when `BURNBAR_DAILY_BUDGET` is set |
+| `{5h}` | 5-hour plan-usage meter (bar + `%` + `↺HH:MM`); Pro/Max only, absent otherwise |
+| `{1w}` | 7-day plan-usage meter (bar + `%` + countdown + `↺HH:MM`); Pro/Max only, absent otherwise |
+| `{sep}` | Responsive separator: ` │ ` when line fits, newline otherwise |
+| `{wrap}` | Soft break: `BURNBAR_WRAP_SEP` (default two spaces) when line fits, newline otherwise |
+
+Wrap empty-capable tags in `[[ ... ]]` to suppress the surrounding label when the tag is empty (e.g. `[[cache: {cache}]]`, `[[5h: {5h}]]`).
 
 Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format string.
 
 1. Ask the user which layout they want, or help them build a format string
 2. Read `$CONFIG_DIR/settings.json`
 3. Update `statusLine.command` to prepend `BURNBAR_FORMAT='...'` before the bash command
-4. If they want to change bar width, also prepend `BURNBAR_BAR_WIDTH=N` (context bar) or `BURNBAR_CACHE_WIDTH=N` (cache bar, default 10)
-5. If they want to change the cost sparkline, prepend `BURNBAR_SPARK=auto|braille|octant|blocks|none` (rendering mode) or `BURNBAR_SPARK_WIDTH=N` (width in cells, default 8; braille/octant fit 2 turns per cell)
-6. Tell the user to restart Claude Code
+4. If they want to change bar widths, prepend the relevant var:
+   - `BURNBAR_BAR_WIDTH=N` — context bar (default 20)
+   - `BURNBAR_CACHE_WIDTH=N` — cache bar (default 8)
+   - `BURNBAR_5H_WIDTH=N` — 5h plan meter bar (default 8)
+   - `BURNBAR_WEEKLY_WIDTH=N` — 7-day plan meter bar (default 8)
+5. If they want spend budgets (enables the bar in `{monthly}`/`{daily}`), prepend `BURNBAR_DAILY_BUDGET=N` (in the plan's currency). `BURNBAR_MONTHLY_BUDGET=N` only applies when the plan reports no limit of its own
+6. If they want to change the cost sparkline, prepend `BURNBAR_SPARK=auto|braille|octant|blocks|none` (rendering mode) or `BURNBAR_SPARK_WIDTH=N` (width in cells, default 8; braille/octant fit 2 turns per cell)
+7. Tell the user to restart Claude Code
 
 **CRITICAL: the format string must be single-quoted in the command to prevent shell expansion.**
 
@@ -80,16 +108,16 @@ Example commands (`/home/user/.claude` stands for the resolved config dir):
 
 ```
 # Default (all elements, colored header)
-BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{next}{sep}{total}{sep}[[cache: {cache}]]{sep}{delta} {spark}{sep}{monthly}{sep}{daily}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Hide costs (screen sharing)
-BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Minimal
-BURNBAR_FORMAT='{bar}  {pct}' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='{bar} {pct}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Costs only
-BURNBAR_FORMAT='{next}  {total}' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='{next}{sep}{total}' bash "/home/user/.claude/burnbar-statusline.sh"
 ```
 
 ## Important

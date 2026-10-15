@@ -6,7 +6,12 @@
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 [ -n "$CLAUDE_CODE_SESSION_ID" ] || exit 0
 key="${CLAUDE_CODE_SESSION_ID:0:8}"
-printf -v now '%(%s)T' -1
+# printf %(...)T needs bash >= 4.2; macOS ships bash 3.2.
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2) )); then
+  printf -v now '%(%s)T' -1
+else
+  now=$(date +%s)
+fi
 printf '%s\n' "$now" > "$CONFIG_DIR/.cache-ts-$key"
 # Turn boundary marker (Stop = Claude finished responding) — the statusline
 # snapshots the cumulative cost when it changes. The $RANDOM suffix keeps

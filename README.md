@@ -40,6 +40,8 @@ Secondary Claude profiles are supported: if `CLAUDE_CONFIG_DIR` is set, Burnbar 
 
 - [jq](https://jqlang.github.io/jq/) — JSON processor (most systems have it; `apt install jq` / `brew install jq`)
 - A terminal with ANSI color support (virtually all modern terminals)
+- bash 3.2 or later (compatible with the stock macOS `/bin/bash`; not yet tested on a Mac)
+- `curl` — only for `{monthly}`/`{daily}`, which read the billed spend of your Claude account (on macOS, from the login Keychain)
 
 ## Manual install
 
@@ -90,11 +92,24 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline)) |
 | `{delta}` | Last turn's cost delta (e.g., "delta:$0.0312") |
 | `{cache}` | Cache TTL progress bar + `MM:SS` countdown |
+| `{monthly}` | Billed spend of the billing period (Enterprise usage, extra-usage credits) from the claude.ai plan-usage endpoint, with the plan's limit as bar + `%`. `BURNBAR_MONTHLY_BUDGET` only applies when the plan has no limit |
+| `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar + `%` when `BURNBAR_DAILY_BUDGET` is set |
+| `{5h}` | 5-hour plan-usage meter (bar + `%` + reset clock `↺HH:MM`); Pro/Max only |
+| `{1w}` | 7-day plan-usage meter (bar + `%` + countdown + reset clock); Pro/Max only |
+| `{sep}` | Responsive group separator — renders ` │ ` when the line fits, else a newline |
+| `{wrap}` | Soft break — renders `BURNBAR_WRAP_SEP` (default two spaces) when the line fits, else a newline |
+
+Static text can be wrapped in an **optional group** `[[ ... ]]`: the group (label
+included) is shown only when at least one `{tag}` inside it is non-empty, and
+disappears otherwise. The default format uses this so the `5h:`/`1w:`/`cache:`
+labels vanish together with their meters when no data is available (e.g. `{5h}`
+and `{1w}` are empty unless you are on a Pro/Max plan). Groups are flat and may not
+contain `{sep}`/`{wrap}`.
 
 Default (when `BURNBAR_FORMAT` is not set):
 
 ```bash
-'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}  {spark}  {delta}'
+'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{next}{sep}{total}{sep}[[cache: {cache}]]{sep}{delta} {spark}{sep}{monthly}{sep}{daily}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]'
 ```
 
 Examples:

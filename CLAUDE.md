@@ -65,6 +65,19 @@ The statusline command receives JSON on stdin with these fields:
 - `session_id` — UUID, stable per conversation
 - `effort.level` — `low`, `medium`, `high`, `max`
 - `fast_mode`, `thinking.enabled`
+- `rate_limits.five_hour.used_percentage` — % of the 5h plan window consumed (0–100, float)
+- `rate_limits.five_hour.resets_at` — epoch seconds when the 5h window resets
+- `rate_limits.seven_day.used_percentage` — % of the 7-day plan window consumed (0–100, float)
+- `rate_limits.seven_day.resets_at` — epoch seconds when the 7-day window resets
+
+`rate_limits` is **only present for Pro/Max subscribers, and only after the first
+API response of the session**. Each window (`five_hour`, `seven_day`) can be absent
+independently — extract with `// ""` to tell "absent" from a real `0`. The
+`used_percentage` is a snapshot of the last API response (same as the in-app "plan
+usage limits" UI); `resets_at` is rendered as a reset clock (`↺HH:MM` for `{5h}`;
+`countdown + ↺HH:MM` for `{1w}`). **Staleness (by design, not a bug):** during idle
+after a reset, the old % holds and the clock/countdown points at an already-past time
+until the next API response refreshes both. Inherent to the source.
 
 ### Multi-Session Behavior
 
@@ -170,9 +183,26 @@ The octant table was generated from Unicode 16 `UnicodeData.txt` — the bottom-
 
 Hot path cost: one `read` per tick for the turn marker plus pure-bash rendering — zero additional forks. The history file is read with `read` builtins and written only on turn boundaries.
 
+## Billed Spend (`{monthly}`, `{daily}`)
+
+Both tags come from `GET https://api.anthropic.com/api/oauth/usage` — the undocumented endpoint behind `/usage` (ADR-0002). It replaced ccusage: Burnbar has no ccusage dependency.
+
+- **Fetch**: `_update_plan_spend`, a background job started by `_spawn_refresh`, every `PLAN_TTL` (300 s), only when the format contains `{monthly}` or `{daily}` and credentials exist. `_read_credentials`: Linux reads `$CONFIG_DIR/.credentials.json`; macOS reads the login Keychain with `security find-generic-password -a <account> -w -s <service>`, using Claude Code's own naming — service `Claude Code-credentials`, plus `-<sha256(dir)[:8]>` when `CLAUDE_CONFIG_DIR` (or `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which wins; empty = no suffix) is set; account `$USER`, or `claude-code-user` when `$USER` has characters outside `[a-zA-Z0-9._-]`. Token: `.claudeAiOauth.accessToken`, skipped when `expiresAt` is past, sent through `curl -H @-` (stdin, never argv — `/proc/*/cmdline` is world-readable).
+- **Never refresh the token.** A refresh rotates the refresh token and can log Claude Code out.
+- **Failure = backoff.** On any failure (401, 429, network, parse) the job writes nothing and **keeps the lock**; `_spawn_refresh` skips while the lock is < 300 s old. Removing the lock on failure turns every failure into one request per tick (1 s) — a 429 seen in testing confirmed the endpoint rate-limits.
+- **Parsing**: `spend.used`/`spend.limit` (`amount_minor` / 10^`exponent`), falling back to `extra_usage.used_credits`/`monthly_limit` (`decimal_places`). Persist guard: the cache is only rewritten with numeric values.
+- **Cache** `~/.cache/burnbar-plan-spend-<profile>`: `used|limit|currency|enabled|epoch|day_baseline|day|daily`. One `read` on the hot path — zero extra forks.
+- **`{daily}` derivation** (in the job, not the hot path): same `day` → keep the baseline; new day → baseline = previous reading if taken since yesterday's midnight, else the current amount (no history → today starts now). `used < baseline` → new billing period, baseline = 0. Known error: spend between yesterday's last reading and midnight lands on today. On the hot path, a cache whose `day` is not today shows `0.00`.
+- **Display**: readings older than `PLAN_MAX_AGE` (1 h) are hidden (both tags empty). The plan limit is the monthly budget; `BURNBAR_MONTHLY_BUDGET` only applies when the plan has none. Currency symbol from the response (USD `$`, EUR `€`, GBP `£`, else the ISO code), shared by both tags.
+- Observed shapes (2026-10): Enterprise → `five_hour`/`seven_day` `null`, `spend` in USD with the org's monthly limit. Pro → windows present, `spend.enabled=false` (`out_of_credits`), shown as `€0.00/€50`. `extra_usage.daily`/`.weekly` exist but were `null` on both.
+
 ## Performance
 
 The script runs every 1 second. Minimize subprocess forks.
+
+### Regression test
+
+Run `tests/perf.sh` after any change to `statusline.sh`. It renders a hermetic fixture (every data tag, no network) and fails on: forks per tick (needs `strace`), CPU time per tick against a budget (CPU, not wall time: wall time doubled under load and flaked), and super-linear scaling — 4x longer segments (wider bars, one escape per cell) and 4x more segments (repeated format body). Verified against two mutants: `sed` per segment (67 forks, 70 ms) and the extglob strip (×31 on segment length). Run it under bash 3.2 too: `docker run --rm -v "$PWD":/w:ro bash:3.2 bash -c 'apk add -q jq coreutils; bash /w/tests/perf.sh'`.
 
 ### Patterns That Work
 
@@ -184,7 +214,8 @@ The script runs every 1 second. Minimize subprocess forks.
 - **`${var:0:8}`** instead of `printf | cut` (bashism, zero forks).
 - **`read -r var < file`** instead of `var=$(cat file)` (no fork).
 - **`printf -v var`** instead of `var=$(printf ...)` (bash builtin, no fork).
-- **`printf '%(%s)T' -1`** instead of `date +%s` (bash builtin, zero forks — saves 2 forks/tick on the hot path).
+- **`_epoch var` / `_strftime var fmt epoch`** instead of `date` — `printf '%(...)T'` builtin on bash >= 4.2 (zero forks), `date` fallback on macOS's bash 3.2 (`date -r`, `date -d` on GNU). Never call `printf '%(...)T'` directly: bash 3.2 rejects it.
+- **`_vis_width`** for the visible width of a segment (strips the literal `\033[...X` text with parameter expansion, linear in the number of escapes). The `{sep}`/`{wrap}` layout splits the line into segments once and measures each segment once.
 - **`$USER`** / **`${HOSTNAME%%.*}`** instead of `whoami` / `hostname -s`.
 
 ### Patterns That Don't Work
@@ -200,6 +231,8 @@ The script runs every 1 second. Minimize subprocess forks.
 | Original (many jq/awk, cell_bg/cell_fg) | ~150 | ~289ms |
 | Optimized (batched jq+awk, inline colors) | ~18 | ~19ms |
 | + printf %(%s)T (no date +%s) | ~16 | ~17ms |
+| `{sep}` collapse/wrap via `$(printf \| sed)` per separator (regression) | ~56 | ~111ms |
+| + `_vis_width`, one measure per segment | ~6 + `_detect_cols` | ~25ms |
 
 ## Known Bugs and Fixes
 
@@ -232,6 +265,18 @@ The script runs every 1 second. Minimize subprocess forks.
 **Bug**: The cost baseline was only captured at the first turn boundary, so the first turn's real cost (`total - 0`) was discarded — the sparkline and `delta` only appeared from the second turn onward.
 
 **Fix**: Capture the baseline eagerly at tracking start and drop the `-n "$spark_marker"` requirement from `spark_record`. See **Cost Sparkline Architecture → State File** for the eager-capture semantics (the `spark_init` seed routed through the sole persist writer, and the fresh-vs-resumed baseline reasoning).
+
+### extglob `*()` in a global substitution hangs the tick
+
+**Bug**: `${s//\\033\[*([0-9;])[A-Za-z]/}` (strip ANSI with extglob) is super-linear: ~0.6 s on a 600-char line. The bars put one escape per cell, so a default line stalled every tick and live statusline processes piled up.
+
+**Fix**: `_vis_width` — a loop of plain `%%` / `#` expansions plus one `${r%%[!0-9;]*}` per escape. Never use `*(...)`/`+(...)` inside `${var//...}` on the hot path.
+
+### Lock mtime on macOS
+
+**Bug**: `stat -c %Y` is GNU-only. On macOS it fails, `_lock_mtime` became 0, the lock looked ancient, and a failing refresh would retry every tick.
+
+**Fix**: `stat -c %Y || stat -f %m`; a non-numeric mtime makes `_spawn_refresh` skip (keep waiting), never spawn.
 
 ### Hook scripts must use `#!/bin/bash`
 
