@@ -102,7 +102,8 @@ Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format 
    - `BURNBAR_WEEKLY_WIDTH=N` — 7-day plan meter bar (default 8)
 5. If they want spend budgets (enables the bar in `{monthly}`/`{daily}`), prepend `BURNBAR_DAILY_BUDGET=N` (in the plan's currency). `BURNBAR_MONTHLY_BUDGET=N` only applies when the plan reports no limit of its own
 6. If they want to change the cost sparkline, prepend `BURNBAR_SPARK=auto|braille|octant|blocks|none` (rendering mode) or `BURNBAR_SPARK_WIDTH=N` (width in cells, default 8; braille/octant fit 2 turns per cell)
-7. Tell the user to restart Claude Code
+7. If they want the cache notification earlier or later, prepend `BURNBAR_NOTIFY_LEAD=N` (seconds before expiry, default 300, capped at half the TTL)
+8. Tell the user to restart Claude Code
 
 **CRITICAL: the format string must be single-quoted in the command to prevent shell expansion.**
 

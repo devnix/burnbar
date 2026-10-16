@@ -10,13 +10,13 @@ SHELL := /bin/bash
 SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0
 ACTIONLINT_IMAGE := rhysd/actionlint:1.7.12
 BASH32_IMAGE     := bash:3.2
-SH_FILES         := statusline.sh hooks/*.sh tests/perf.sh
+SH_FILES         := statusline.sh hooks/*.sh tests/*.sh
 # perf.sh thresholds, forwarded into the bash 3.2 container only when set.
 PERF_ENV := PERF_RUNS PERF_BUDGET_MS PERF_MAX_FORKS PERF_MAX_SEG_RATIO PERF_MAX_RATIO
 
-.PHONY: ci lint shellcheck actionlint manifests perf perf-bash32
+.PHONY: ci lint shellcheck actionlint manifests test test-bash32 perf perf-bash32
 
-ci: lint perf perf-bash32
+ci: lint test test-bash32 perf perf-bash32
 
 lint: shellcheck actionlint manifests
 
@@ -33,6 +33,14 @@ manifests:
 	p=$$(jq -r .version .claude-plugin/plugin.json); \
 	m=$$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json); \
 	echo "plugin.json=$$p marketplace.json=$$m"; [ "$$p" = "$$m" ]
+
+# Functional tests. TEST_BASH selects the bash under test (macOS: /bin/bash).
+test:
+	bash tests/cache-ttl.sh
+
+test-bash32:
+	docker run --rm -v "$$PWD":/w:ro $(BASH32_IMAGE) \
+	  bash -c 'apk add -q jq coreutils; bash /w/tests/cache-ttl.sh'
 
 # On Linux, strace is required: without it perf.sh silently skips the fork gate.
 perf:
