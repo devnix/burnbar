@@ -18,7 +18,7 @@
 #
 # No network: a credentials file exists (so {monthly}/{daily} render from the
 # cache) but the plan cache is fresh, and curl/security are stubbed to fail.
-# The price cache (BURNBAR_FRESH_PRICES=1) is fresh too: the hot-path
+# The price cache (fresh prices are on by default) is fresh too: the hot-path
 # lookup runs, the download does not.
 #
 # Usage: tests/perf.sh
@@ -109,7 +109,6 @@ tick() {  # [prefix cmd...] -- $1 = format, $2 = columns, $3 = bar width (defaul
   # ${a[@]+"${a[@]}"}: on bash < 4.4 an empty "${pre[@]}" trips set -u.
   ${pre[@]+"${pre[@]}"} env -i PATH="$BIN:$PATH" HOME="$HOM" USER=perf HOSTNAME=perfhost LANG="${LANG:-C.UTF-8}" \
     CLAUDE_CONFIG_DIR="$CFG" BURNBAR_FORMAT="$1" BURNBAR_COLS="$2" BURNBAR_NOTIFY=none \
-    BURNBAR_FRESH_PRICES=1 \
     BURNBAR_BAR_WIDTH="$(( w * 5 / 2 ))" BURNBAR_CACHE_WIDTH="$w" BURNBAR_5H_WIDTH="$w" \
     BURNBAR_WEEKLY_WIDTH="$w" BURNBAR_SPARK_WIDTH="$w" \
     "$TEST_BASH" "$SCRIPT" < "$TMP/in.json"

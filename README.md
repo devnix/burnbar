@@ -263,10 +263,10 @@ An unlisted version of a known family uses the newest price of that family. Not 
 
 ### `BURNBAR_FRESH_PRICES`
 
-Set `1` to refresh the prices of `{miss}` once a day from [models.dev](https://models.dev) (Anthropic models only). A new model then gets its price before a Burnbar update. Default: `0`, the table above only.
+By default, Burnbar refreshes the prices of `{miss}` once a day from [models.dev](https://models.dev) (Anthropic models only). A new model then gets its price before a Burnbar update. Set `0` to use only the table above, with no request to models.dev.
 
 ```bash
-export BURNBAR_FRESH_PRICES=1
+export BURNBAR_FRESH_PRICES=0
 ```
 
 - The download (~0.5 MB compressed) runs in the background, only when the format contains `{miss}`. The statusline never waits for it.

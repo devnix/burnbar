@@ -10,8 +10,8 @@
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8, 0 = countdown only)
 #   BURNBAR_CACHE_TTL   — cache TTL in seconds (default: detected per session, 300 or 3600)
 #   BURNBAR_NOTIFY_LEAD — seconds before cache expiry to notify (default: 300, max TTL/2)
-#   BURNBAR_FRESH_PRICES — 1 = refresh the {miss} prices daily from models.dev
-#                          (default: 0, the built-in table only)
+#   BURNBAR_FRESH_PRICES — 0 = the built-in {miss} price table only, no download
+#                          (default: 1, refresh the prices daily from models.dev)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
 #   BURNBAR_MONTHLY_BUDGET — monthly budget in the plan's currency, only used when the
@@ -215,8 +215,8 @@ if [ -n "$plan_used" ] && [ "$(( _spend_now - _plan_epoch ))" -le "$PLAN_MAX_AGE
   esac
 fi
 
-# ── Fresh prices (models.dev, opt-in, daily cache) ────────────────────────────
-#   BURNBAR_FRESH_PRICES=1: a background job downloads the models.dev
+# ── Fresh prices (models.dev, on by default, daily cache) ─────────────────────
+#   Unless BURNBAR_FRESH_PRICES=0, a background job downloads the models.dev
 #   catalog once a day and keeps the base input prices of the Anthropic models
 #   (see ADR-0003). The hot path reads the cache with read builtins (no fork)
 #   and overrides the built-in table on a hit. A cache older than PRICE_MAX_AGE
@@ -229,7 +229,7 @@ PRICE_BACKOFF=21600  # between failed attempts: the catalog is ~6 MB (~0.5 MB gz
 PRICE_CACHE="${HOME}/.cache/burnbar-prices"
 PRICE_LOCK="${HOME}/.cache/burnbar-prices.lock"
 price_fresh=0
-[ "${BURNBAR_FRESH_PRICES:-0}" = 1 ] && [[ "$_fmt" == *'{miss}'* || "$_fmt" == *'{next}'* ]] \
+[ "${BURNBAR_FRESH_PRICES:-1}" != 0 ] && [[ "$_fmt" == *'{miss}'* || "$_fmt" == *'{next}'* ]] \
   && price_fresh=1
 
 # Only .anthropic.models: other providers list Claude at their own prices. The

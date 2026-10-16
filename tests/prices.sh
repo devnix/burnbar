@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Burnbar fresh-prices test (BURNBAR_FRESH_PRICES=1).
+# Burnbar fresh-prices test (on by default, BURNBAR_FRESH_PRICES=0 turns it off).
 #
 # The background job keeps the base input prices of .anthropic.models, keyed
 # by _model_key. The hot path overrides the built-in table on a hit, and falls
-# back to it on a miss, a stale cache, a corrupt line, or without the opt-in.
+# back to it on a miss, a stale cache, a corrupt line, or with BURNBAR_FRESH_PRICES=0.
 # A failed download keeps the old cache and the lock (the retry backoff).
 #
 # {miss} = 100K context tokens × price × 1.25 (5m TTL) → $0.125 per $1/MTok.
@@ -60,7 +60,7 @@ render() {
   printf '{"cwd":"/tmp","session_id":"pricetst-0000","model":{"id":"%s"},"context_window":{"current_usage":{"input_tokens":%s}}}' \
     "$model" "$toks" |
     env -i PATH="$BIN:$PATH" HOME="$HOM" USER=t HOSTNAME=h LANG="${LANG:-C.UTF-8}" CLAUDE_CONFIG_DIR="$CFG" \
-      BURNBAR_FORMAT='{miss}' BURNBAR_COLS=200 BURNBAR_NOTIFY=none BURNBAR_FRESH_PRICES=1 "$@" \
+      BURNBAR_FORMAT='{miss}' BURNBAR_COLS=200 BURNBAR_NOTIFY=none "$@" \
       "$TEST_BASH" "$REPO/statusline.sh" | sed 's/\x1b\[[0-9;]*m//g; s/^miss://'
 }
 
@@ -92,7 +92,7 @@ check "long-context tier applies"   '$0.1250'  "$(render claude-haiku-5-5 200000
 check "new family gets a price"     '$0.7500'  "$(render claude-quill-6 100000)"
 check "absent model → table"        '$1.8750'  "$(render claude-opus-4-1 100000)"
 check "corrupt line → table"        '$0.2500'  "$(render claude-sonnet-5 100000)"
-check "no opt-in → table"           '$0.5000'  "$(render claude-opus-5-5 100000 BURNBAR_FRESH_PRICES=0)"
+check "BURNBAR_FRESH_PRICES=0 → table"        '$0.5000'  "$(render claude-opus-5-5 100000 BURNBAR_FRESH_PRICES=0)"
 check "fresh cache → no download"   "no"       "$([ -f "$LOCK" ] && echo yes || echo no)"
 reset
 render claude-opus-5-5 100000 BURNBAR_FORMAT='{ctx}' >/dev/null
@@ -114,5 +114,17 @@ check "garbage keeps the lock"      "yes" "$([ -f "$LOCK" ] && echo yes)"
 check "backoff: no new download"    '$5.0000' "$(render claude-opus-5-5 100000 CURL_BODY="$TMP/api.json")"
 sleep 1
 check "backoff: cache unchanged"    "claude-opus-5-5 40 0 0" "$(sed -n 2p "$CACHE")"
+# Backoff over (lock older than 6 h) → the next tick downloads again.
+_old=$(( NOW - 7 * 3600 ))
+touch -t "$(date -r "$_old" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$_old" +%Y%m%d%H%M.%S)" "$LOCK"
+render claude-opus-5-5 100000 CURL_BODY="$TMP/api.json" >/dev/null
+wait_for '[ ! -f "$LOCK" ]'
+check "backoff over → download again" "claude-opus-5-5 4 0 0" "$(grep '^claude-opus-5-5 ' "$CACHE")"
+
+# ── No ~/.cache (macOS) ───────────────────────────────────────────────────────
+rm -rf "$HOM"; mkdir -p "$HOM"
+render claude-opus-5-5 100000 CURL_BODY="$TMP/api.json" >/dev/null
+wait_for '[ -f "$CACHE" ] && [ ! -f "$LOCK" ]'
+check "no ~/.cache → created, cache written" "claude-opus-5-5 4 0 0" "$(grep '^claude-opus-5-5 ' "$CACHE" 2>/dev/null)"
 
 exit "$fail"
