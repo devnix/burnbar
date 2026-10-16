@@ -93,8 +93,8 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline)) |
 | `{delta}` | Cost of the current turn, live; between turns, of the last turn (e.g., "delta:$0.0312") |
 | `{cache}` | Cache TTL progress bar + `MM:SS` countdown (`BURNBAR_CACHE_WIDTH=0`: countdown only) |
-| `{monthly}` | Billed spend of the billing period (Enterprise usage, extra-usage credits) from the claude.ai plan-usage endpoint, with the plan's limit as bar + `%`. `BURNBAR_MONTHLY_BUDGET` only applies when the plan has no limit |
-| `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar + `%` when `BURNBAR_DAILY_BUDGET` is set |
+| `{monthly}` | Billed spend of the billing period (Enterprise usage, extra-usage credits) from the claude.ai plan-usage endpoint, with the plan's limit as bar + `%`. `BURNBAR_MONTHLY_BUDGET` only applies when the plan has no limit. A `~` before the amount (`mo:~$98.33`) marks a reading older than 15 minutes: the endpoint failed (for example, rate limit) and the retries back off from 5 minutes up to 1 hour |
+| `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar + `%` when `BURNBAR_DAILY_BUDGET` is set; `~` as in `{monthly}` |
 | `{5h}` | 5-hour plan-usage meter (bar + `%` + reset clock `↺HH:MM`); Pro/Max only |
 | `{1w}` | 7-day plan-usage meter (bar + `%` + countdown + reset clock); Pro/Max only |
 | `{sep}` | Responsive group separator — renders ` │ ` when the line fits, else a newline |

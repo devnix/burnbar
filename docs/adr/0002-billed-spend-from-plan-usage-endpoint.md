@@ -40,6 +40,10 @@ Rejected alternatives:
 - Background fetch every 5 minutes, only when the format uses either tag. Any
   failure keeps the lock, so retries wait 5 minutes. Readings older than 1 hour
   are hidden. Read-only use of the token: Burnbar never refreshes it.
+- Amended 2026-10-16: the endpoint returned 429 (`retry-after: 0`) for more
+  than 1.5 hours, so both tags disappeared. Now the retry wait doubles after
+  each failure (5 minutes up to 1 hour), and a reading older than 15 minutes is
+  shown with a `~` before the amounts, not hidden.
 
 ## Consequences
 
@@ -48,7 +52,8 @@ Rejected alternatives:
 - `{daily}` is approximate: spend between the last reading of the previous day
   and midnight lands on today; with no reading since yesterday, today starts at
   the first reading.
-- The endpoint can change or disappear without notice; both tags then go empty.
+- The endpoint can change or disappear without notice; both tags then keep the
+  last reading with a `~` (before the 2026-10-16 amendment: both tags went empty).
 - macOS keeps the token in the login Keychain. Burnbar reads it with `security`,
   using Claude Code's service naming (a hash suffix for a non-default config
   dir). If Claude Code changes that naming, both tags go empty on macOS.
