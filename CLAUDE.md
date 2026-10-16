@@ -131,6 +131,16 @@ Claude Code picks the cache TTL per user: 1h for subscribers (behind an allowlis
 
 `miss = ctx × price_in × (2 for 1h | 1.25 for 5m)`: the whole context written to the cache again. Only the base input price is needed. The `case` matches the version (specific globs first, `[1m]` suffix stripped); an unlisted version of a known family gets the newest price of that family. Haiku 5.5 has a long-context tier (`price_lc`/`price_lc_in`), chosen in awk from `ctx`. `{next}` was the old "current context at last call's cache split" estimate; it is now an alias, so user formats keep working.
 
+### Fresh Prices (`BURNBAR_FRESH_PRICES=1`)
+
+Opt-in daily refresh of `price_in`/`price_lc`/`price_lc_in` from `https://models.dev/api.json` (ADR-0003). The `case` stays the fallback and still sets `model_family`.
+
+- **Job** `_update_prices`, started by `_spawn_refresh` when the cache epoch is older than `PRICE_TTL` (1 day), only when the format has `{miss}` or `{next}`. It keeps only `.anthropic.models` (other providers list Claude at other prices), the `input` price and the first `tiers[]` entry with `tier.type == "context"`. Each id goes through `_model_key`, so a Bedrock, Vertex, `[1m]` or dated id matches by construction: `_model_key` is defined before the pricing block for this reason.
+- **Failure = backoff**, as for the plan spend, but `PRICE_BACKOFF` is 6 h (the third argument of `_spawn_refresh`): the catalog is ~6 MB (~0.5 MB with `--compressed`), and a schema change that the parser rejects would otherwise download it every 5 min. The job writes a `mktemp` file in the cache dir, then `mv`; the lock goes only after the `mv`.
+- **Cache** `~/.cache/burnbar-prices`: line 1 = fetch epoch (no `stat` on the hot path), then `key price_in price_lc price_lc_in`. Not per profile: prices do not depend on the account.
+- **Hot path**: after the `case`, a `while read` loop over the cache (builtins, zero forks), override on the first valid line of the same key. A hit sets `model_known=1`, so a new family gets a price. A cache older than `PRICE_MAX_AGE` (7 days) is ignored: an old download must not override a newer table from a plugin update.
+- `tests/perf.sh` runs with the opt-in and a fresh cache (the fixture model last), and its sanity check expects the cache price, so the fork gate covers the lookup. Functional tests: `tests/prices.sh`.
+
 ### Metadata Files (`~/.claude/.cache-meta-<session_prefix>`)
 
 - Key = first 8 chars of `session_id` (per-session isolation)

@@ -10,6 +10,8 @@
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8, 0 = countdown only)
 #   BURNBAR_CACHE_TTL   — cache TTL in seconds (default: detected per session, 300 or 3600)
 #   BURNBAR_NOTIFY_LEAD — seconds before cache expiry to notify (default: 300, max TTL/2)
+#   BURNBAR_FRESH_PRICES — 1 = refresh the {miss} prices daily from models.dev
+#                          (default: 0, the built-in table only)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
 #   BURNBAR_MONTHLY_BUDGET — monthly budget in the plan's currency, only used when the
@@ -53,6 +55,17 @@ else
     fi
   }
 fi
+
+# _model_key var id — one key per model version, for every provider's id form:
+# "claude-" onward, without "[1m]", "@date" (Vertex), "-v1:0" (Bedrock) or a
+# "-YYYYMMDD" date. Empty id → "none".
+_model_key() {
+  local v=$2
+  case "$v" in *claude-*) v="claude-${v#*claude-}" ;; esac
+  v=${v%%\[*}; v=${v%%@*}; v=${v%%-v[0-9]*}
+  case "$v" in *-20[0-9][0-9][0-9][0-9][0-9][0-9]) v=${v%-*} ;; esac
+  printf -v "$1" '%s' "${v:-none}"
+}
 
 # Format string — resolved up front so data sources can skip work for tags the
 # format does not use.
@@ -153,11 +166,12 @@ _update_plan_spend() {
     > "$PLAN_CACHE" && rm -f "${PLAN_LOCK}"
 }
 
-# Start a background refresh unless another one holds a fresh (<5 min) lock.
+# Start a background refresh unless another one holds a lock younger than the
+# backoff (default 300 s).
 # Redirect the job's stdout/stderr so it does not keep the statusline's stdout
 # pipe open: Claude Code reads stdout until EOF, which would otherwise block
 # until the (slow) refresh finishes.
-_spawn_refresh() {  # $1 = refresh function, $2 = lock file
+_spawn_refresh() {  # $1 = refresh function, $2 = lock file, $3 = backoff (s)
   local _lock_mtime
   if [ -f "$2" ]; then
     # GNU stat -c, BSD/macOS stat -f. An unreadable mtime must not disable the
@@ -165,7 +179,7 @@ _spawn_refresh() {  # $1 = refresh function, $2 = lock file
     _lock_mtime=$(stat -c %Y "$2" 2>/dev/null || stat -f %m "$2" 2>/dev/null)
     case "$_lock_mtime" in ''|*[!0-9]*) return ;; esac
     # shellcheck disable=SC2154  # _epoch assigns it (printf -v)
-    [ "$(( _spend_now - _lock_mtime ))" -lt 300 ] && return
+    [ "$(( _spend_now - _lock_mtime ))" -lt "${3:-300}" ] && return
   fi
   # No lock, no spawn: without it nothing stops a new job every tick. macOS
   # often has no ~/.cache.
@@ -200,6 +214,52 @@ if [ -n "$plan_used" ] && [ "$(( _spend_now - _plan_epoch ))" -le "$PLAN_MAX_AGE
     *)   spend_sym="${plan_cur} " ;;
   esac
 fi
+
+# ── Fresh prices (models.dev, opt-in, daily cache) ────────────────────────────
+#   BURNBAR_FRESH_PRICES=1: a background job downloads the models.dev
+#   catalog once a day and keeps the base input prices of the Anthropic models
+#   (see ADR-0003). The hot path reads the cache with read builtins (no fork)
+#   and overrides the built-in table on a hit. A cache older than PRICE_MAX_AGE
+#   is ignored: an old download must not override a newer table that came with
+#   a plugin update.
+PRICE_TTL=86400
+PRICE_MAX_AGE=604800
+PRICE_BACKOFF=21600  # between failed attempts: the catalog is ~6 MB (~0.5 MB gzip)
+# Line 1: the fetch epoch. Then one line per model: key price_in price_lc price_lc_in
+PRICE_CACHE="${HOME}/.cache/burnbar-prices"
+PRICE_LOCK="${HOME}/.cache/burnbar-prices.lock"
+price_fresh=0
+[ "${BURNBAR_FRESH_PRICES:-0}" = 1 ] && [[ "$_fmt" == *'{miss}'* || "$_fmt" == *'{next}'* ]] \
+  && price_fresh=1
+
+# Only .anthropic.models: other providers list Claude at their own prices. The
+# ids go through _model_key, so the lookup matches every provider's id form. On
+# a failure (network, schema change) write nothing and keep the lock: the retry
+# waits PRICE_BACKOFF.
+_update_prices() {
+  local _ts _tmp _id _in _lc _lcin _key _n=0
+  _epoch _ts
+  _tmp=$(mktemp "${PRICE_CACHE}.XXXXXX") || return
+  {
+    printf '%s\n' "$_ts"
+    while read -r _id _in _lc _lcin; do
+      case "$_in" in ''|*[!0-9.]*) continue ;; esac
+      case "$_lc$_lcin" in *[!0-9.]*) continue ;; esac
+      _model_key _key "$_id"
+      printf '%s %s %s %s\n' "$_key" "$_in" "${_lc:-0}" "${_lcin:-0}"
+      _n=$(( _n + 1 ))
+    done < <(curl -fsS --compressed -m 30 https://models.dev/api.json 2>/dev/null | jq -r '
+      .anthropic.models // {} | to_entries[]
+      | (.value.cost.tiers // [] | map(select(.tier.type == "context")) | first) as $t
+      | [.key, .value.cost.input, ($t.tier.size // 0), ($t.input // 0)]
+      | map(tostring) | join(" ")' 2>/dev/null)
+  } > "$_tmp"
+  if [ "$_n" -gt 0 ] && mv -f "$_tmp" "$PRICE_CACHE"; then
+    rm -f "$PRICE_LOCK"
+  else
+    rm -f "$_tmp"
+  fi
+}
 
 # ── Parse input (single jq call) ─────────────────────────────────────────────
 input=$(cat)
@@ -242,6 +302,29 @@ case "${model_id%%\[*}" in  # without a "[1m]" suffix
   *haiku*)                             price_in=0.10; model_family="haiku" price_lc=100000 price_lc_in=0.50 ;;
   *)                                   price_in=0;    model_family="unknown" model_known=0 ;;
 esac
+# A fresh price overrides the table, and prices a model the table does not know.
+if [ "$price_fresh" = 1 ]; then
+  _price_epoch=0
+  if [ -f "$PRICE_CACHE" ]; then
+    _model_key _price_key "$model_id"
+    {
+      read -r _price_epoch
+      case "$_price_epoch" in ''|*[!0-9]*) _price_epoch=0 ;; esac
+      if [ "$(( _spend_now - _price_epoch ))" -le "$PRICE_MAX_AGE" ]; then
+        while read -r _pk _pin _plc _plcin; do
+          # shellcheck disable=SC2154  # _model_key assigns it (printf -v)
+          [ "$_pk" = "$_price_key" ] || continue
+          case "$_pin" in ''|*[!0-9.]*) continue ;; esac
+          case "$_plc$_plcin" in *[!0-9.]*) continue ;; esac
+          price_in=$_pin price_lc=${_plc:-0} price_lc_in=${_plcin:-0} model_known=1
+          break
+        done
+      fi
+    } < "$PRICE_CACHE"
+  fi
+  [ "$(( _spend_now - _price_epoch ))" -gt "$PRICE_TTL" ] \
+    && _spawn_refresh _update_prices "$PRICE_LOCK" "$PRICE_BACKOFF"
+fi
 
 # ── Effort change and the cache ───────────────────────────────────────────────
 #   Claude Code sends an effort change as a per-turn system message (beta
@@ -618,16 +701,6 @@ _total="total:\033[01;31m\$${total_cost}\033[00m"
 _delta="delta:\033[01;36m\$${last_delta}\033[00m"
 
 # ── Cache timer rendering ─────────────────────────────────────────────────────
-# _model_key var id — one key per model version, for every provider's id form:
-# "claude-" onward, without "[1m]", "@date" (Vertex), "-v1:0" (Bedrock) or a
-# "-YYYYMMDD" date. Empty id → "none".
-_model_key() {
-  local v=$2
-  case "$v" in *claude-*) v="claude-${v#*claude-}" ;; esac
-  v=${v%%\[*}; v=${v%%@*}; v=${v%%-v[0-9]*}
-  case "$v" in *-20[0-9][0-9][0-9][0-9][0-9][0-9]) v=${v%-*} ;; esac
-  printf -v "$1" '%s' "${v:-none}"
-}
 _cache=""
 if [ "$has_cache" = 1 ]; then
   cache_alert=""
