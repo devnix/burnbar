@@ -77,7 +77,7 @@ Available tags:
 | `{miss}` | Cost of the next message on a cache miss (context × cache-write price); red when the cache has expired |
 | `{next}` | Former name of `{miss}` (an alias) |
 | `{total}` | Total session cost |
-| `{cache}` | Cache TTL bar + `MM:SS` countdown |
+| `{cache}` | Cache TTL bar + `MM:SS` countdown; `00:00` flashes red when the cache has expired. `BURNBAR_CACHE_WIDTH=0` hides the bar (countdown only) |
 | `{spark}` | Per-turn cost sparkline (the last column grows with the current turn) |
 | `{delta}` | Cost of the current turn, live; between turns, of the last turn |
 | `{monthly}` | Billed spend of the billing period + plan limit bar (claude.ai plan-usage endpoint) |
@@ -96,7 +96,7 @@ Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format 
 3. Update `statusLine.command` to prepend `BURNBAR_FORMAT='...'` before the bash command
 4. If they want to change bar widths, prepend the relevant var:
    - `BURNBAR_BAR_WIDTH=N` — context bar (default 20)
-   - `BURNBAR_CACHE_WIDTH=N` — cache bar (default 8)
+   - `BURNBAR_CACHE_WIDTH=N` — cache bar (default 8; `0` hides the bar and keeps the colored countdown, for users who want to save space)
    - `BURNBAR_CACHE_TTL=N` — cache TTL in seconds (default: detected per session from the transcript, 300 or 3600)
    - `BURNBAR_5H_WIDTH=N` — 5h plan meter bar (default 8)
    - `BURNBAR_WEEKLY_WIDTH=N` — 7-day plan meter bar (default 8)

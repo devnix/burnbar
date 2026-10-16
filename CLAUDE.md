@@ -121,6 +121,8 @@ Claude Code picks the cache TTL per user: 1h for subscribers (behind an allowlis
 - Statusline: `BURNBAR_CACHE_TTL`, else one `read` of the file (only `300`/`3600` are valid), else `300`.
 - Do not infer the TTL from the auth type or from `rate_limits`: the binary decides it through an allowlist, a feature flag and a "keep 5m" path, so the plan alone does not tell it.
 - The colors scale with the TTL (green > 40%, yellow > 20%). The notification fires `BURNBAR_NOTIFY_LEAD` seconds before expiry (default 300), capped at 50% of the TTL: 5:00 on a 1h cache, 2:30 on a 5m cache.
+- Expired (`00:00`): the countdown flashes, white on red when the epoch second is even. The statusline runs once per second (`refreshInterval: 1`), so the color alternates with zero forks. SGR 5 (blink) did not show in a test on Claude Code with Ghostty.
+- `BURNBAR_CACHE_WIDTH=0` hides the bar: no `_render_bar` call and no leading space. A non-numeric width falls back to 8.
 - Known error: if `Stop` fires before the last response is in the transcript, a text-only turn reads the previous response. Worst case: one turn of lag. `PostToolUse` runs after the tool result is written, so it reads the current response.
 - Tested by `tests/cache-ttl.sh` (`make test`, `make test-bash32`).
 - Not cleared on `SessionStart` (a resumed session keeps its TTL); stale files (>1 day) are cleaned with the others.

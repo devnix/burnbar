@@ -6,7 +6,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ## Features
 
-- **Cache TTL countdown** ⭐ — progress bar + `MM:SS` timer tracking the prompt cache window (5 minutes or 1 hour, detected per session), next to the cost of a cache miss. When 5 minutes remain (2:30 on a 5-minute cache), Burnbar fires a notification using Claude Code's own notification settings (terminal bell, iTerm2, Ghostty, Kitty — whatever you have configured). No more paying to re-warm a cache you didn't know had expired.
+- **Cache TTL countdown** ⭐ — progress bar (optional) + `MM:SS` timer tracking the prompt cache window (5 minutes or 1 hour, detected per session), next to the cost of a cache miss. When 5 minutes remain (2:30 on a 5-minute cache), Burnbar fires a notification using Claude Code's own notification settings (terminal bell, iTerm2, Ghostty, Kitty — whatever you have configured). When the cache expires, `00:00` flashes red. No more paying to re-warm a cache you didn't know had expired.
 - **Context window progress bar** with color gradient (green → yellow → red)
 - **Partial block characters** (▏▎▍▌▋▊▉) for smooth, sub-cell precision
 - **Token count** showing current context size, color-matched to usage level
@@ -92,7 +92,7 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{total}` | Cumulative session cost |
 | `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline)) |
 | `{delta}` | Cost of the current turn, live; between turns, of the last turn (e.g., "delta:$0.0312") |
-| `{cache}` | Cache TTL progress bar + `MM:SS` countdown |
+| `{cache}` | Cache TTL progress bar + `MM:SS` countdown (`BURNBAR_CACHE_WIDTH=0`: countdown only) |
 | `{monthly}` | Billed spend of the billing period (Enterprise usage, extra-usage credits) from the claude.ai plan-usage endpoint, with the plan's limit as bar + `%`. `BURNBAR_MONTHLY_BUDGET` only applies when the plan has no limit |
 | `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar + `%` when `BURNBAR_DAILY_BUDGET` is set |
 | `{5h}` | 5-hour plan-usage meter (bar + `%` + reset clock `↺HH:MM`); Pro/Max only |
@@ -151,7 +151,7 @@ You can set variables inline in your `~/.claude/settings.json`:
 
 ## Cache timer
 
-The prompt cache has a TTL of 5 minutes or 1 hour — after expiration, your next message reprocesses the entire conversation (higher latency, higher cost; `{miss}` shows how much). The `{cache}` tag shows a progress bar that drains over the TTL with a `MM:SS` countdown, so you can decide whether to keep going or start fresh.
+The prompt cache has a TTL of 5 minutes or 1 hour — after expiration, your next message reprocesses the entire conversation (higher latency, higher cost; `{miss}` shows how much). The `{cache}` tag shows a progress bar that drains over the TTL with a `MM:SS` countdown, so you can decide whether to keep going or start fresh. To save space, hide the bar with `BURNBAR_CACHE_WIDTH=0`: the countdown keeps its colors and its flash on expiry.
 
 Claude Code picks the TTL per user (subscription, settings, `ENABLE_PROMPT_CACHING_1H`). Burnbar reads it from the session transcript after each API call (the `PostToolUse` and `Stop` hooks): the last cache write tells 5m or 1h. Until the first cache write, the timer assumes 5 minutes. To force a value, set `BURNBAR_CACHE_TTL` (seconds).
 
@@ -160,7 +160,8 @@ Claude Code picks the TTL per user (subscription, settings, `ENABLE_PROMPT_CACHI
 | Grey | `--:--` | No API call yet (session just started) |
 | Green | > 40% of the TTL (> 2 min on a 5m cache) | Cache is warm |
 | Yellow | 20–40% (1–2 min) | Approaching expiration |
-| Red | < 20% (< 1 min) | Near expiration / expired |
+| Red | < 20% (< 1 min) | Near expiration |
+| Flashing red | `00:00` | Expired: the next message pays `{miss}`. Needs `refreshInterval: 1` |
 
 The timer resets on every API call — when you submit a message (`UserPromptSubmit`) or Claude uses a tool (`PostToolUse`). Before your first interaction, the bar renders in a neutral grey state with `--:--`.
 
@@ -182,10 +183,11 @@ export BURNBAR_NOTIFY_LEAD=600
 
 ### `BURNBAR_CACHE_WIDTH`
 
-Cache progress bar width in terminal cells. Default: `8`.
+Cache progress bar width in terminal cells. Default: `8`. Set `0` to hide the bar and keep only the colored `MM:SS` countdown.
 
 ```bash
 export BURNBAR_CACHE_WIDTH=15
+export BURNBAR_CACHE_WIDTH=0   # countdown only, saves space
 ```
 
 ## Cost sparkline
