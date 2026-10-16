@@ -21,7 +21,7 @@
 #
 # Usage: tests/perf.sh
 # Env:   PERF_RUNS (default 30)  PERF_BUDGET_MS (60; 90 on bash < 4.2)
-#        PERF_MAX_FORKS (6; 8)  PERF_MAX_SEG_RATIO (8)  PERF_MAX_RATIO (5; 9)
+#        PERF_MAX_FORKS (6; 8)  PERF_MAX_SEG_RATIO (8)  PERF_MAX_RATIO (5; 7)
 #        PERF_BASH — bash binary under test (default: bash)
 #        PERF_SCRIPT — statusline under test (default: ../statusline.sh)
 
@@ -37,7 +37,7 @@ RUNS="${PERF_RUNS:-30}"
 if [ "$("$TEST_BASH" -c 'echo $(( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] ))')" -ge 402 ]; then
   _d_budget=60 _d_forks=6 _d_ratio=5
 else
-  _d_budget=90 _d_forks=8 _d_ratio=9
+  _d_budget=90 _d_forks=8 _d_ratio=7
 fi
 BUDGET_MS="${PERF_BUDGET_MS:-$_d_budget}"
 MAX_FORKS="${PERF_MAX_FORKS:-$_d_forks}"
