@@ -134,16 +134,34 @@ Claude Code picks the cache TTL per user: 1h for subscribers (behind an allowlis
 ### Metadata Files (`~/.claude/.cache-meta-<session_prefix>`)
 
 - Key = first 8 chars of `session_id` (per-session isolation)
-- Format: `timestamp|model_family|effort_level` (pipe-delimited)
+- Format: `timestamp|model_id|effort_level` (pipe-delimited; `model_id` without `[1m]` except on the 200K models, `none` when absent)
 - **Baseline semantics**: model and effort are recorded when the file is created and reset on each new API call (`meta_ts != last`). Between API calls, the baseline is immutable — the alert persists while the current model/effort differs
-- Baseline resets when the user sends a message or Claude uses a tool (hook fires → new timestamp), confirming the user is working with the current model
+- Baseline resets when the user sends a message or Claude uses a tool (hook fires → new timestamp). The reset tick also evaluates the alert.
+- **Baseline model = the model of the last API call**, not the statusline model at the reset: a switch during a turn changes the statusline model, but the calls already made used the old one. On `PostToolUse`/`Stop`, `cache-touch.sh` reads `message.model` of the last main-thread assistant entry in the transcript tail and writes `.cache-model-<key>` as `epoch|model`, **before** the timestamp, with the same epoch. The statusline reads it only on a reset, and uses it only when its epoch equals `last` and its model differs from the current one (compared by `_model_key`, so `[1m]`, Bedrock and Vertex forms match). `UserPromptSubmit` writes `epoch|` (no model): a prompt goes to the current model.
+- The timestamp write stays unconditional: the transcript parse cannot skip it.
+- Only the model comes from the transcript, not the effort: the effort sent (`effort` field) includes per-turn, hook and carried effort and the clamp when thinking is off, so it can differ from `effort.level` for good. An effort switch during a turn is still not caught.
+- Known false alert: a server refusal fallback answers with the fallback model, so `⚠ model` shows until the next API call.
+- Same-second limit: two hooks in one second give one `last`; the statusline sees one reset.
 - Stale files (>1 day) cleaned on `SessionStart` via `find -mtime +1 -delete`
 
-### Model Family Normalization
+### Model Comparison
 
-`model.id` changes subtly when effort level changes (e.g., different internal variant). To avoid false "model changed" alerts when only effort changed, compare by **family** (`opus`/`sonnet`/`haiku`) extracted via case pattern matching, not the full `model.id` string.
+The cache belongs to one model version, so Sonnet 4.6 → Sonnet 5.5 is a model change. Compare `model.id`, not the family.
 
-Alert priority: model first (if family changed), effort second (only if model family stayed the same).
+The `[1m]` suffix: on the 200K models with `supports_1m_beta` (Sonnet 4.0/4.5/4.6, Opus 4.6), it sends the `context-1m-2025-08-07` beta and moves the request to the 1M tier: it is part of the key, so a toggle alerts. Not measured (Sonnet 4.6 `[1m]` needs usage credits on a Pro/Max plan). On the native-1M models, it is stripped: measured on Haiku 5.5 (2026-10-16), `[1m]` read 43 K of 43 K. In 2.1.301, `model.id` is the model of the next call: it follows the permission mode (e.g. `opusplan`) and the 200K threshold, not the effort level.
+
+A meta file written by an older Burnbar holds the family (`opus`/`sonnet`/`haiku`/`fable`/`unknown`): it is compared with the family, so an upgrade causes no false alert. The next API call rewrites it with the id.
+
+Alert priority: model first, effort second (only if the model stayed the same).
+
+### Effort Alert by Model (`effort_breaks_cache`)
+
+The effort alert shows only when an effort change rewrites the cache. Claude Code (2.1.301) sends `output_config.effort` at the top level **and**, on the models with the `per_turn_effort` capability (Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5), a per-turn `role: "system"` message with the new effort (beta `per-turn-control-2026-07-01`). With that message, the cache stays.
+
+- Measured with `claude -p --effort low|high --resume` (2026-10-16): Haiku 5.5 read 42 K of 42 K after low→high; Sonnet 5 read 0 and wrote 50 K.
+- The `case` on `model_id` lists the models that rewrite the cache: the models that get `output_config.effort`, less the `per_turn_effort` ones. The binary function that sends effort (`Ub()` in 2.1.301) excludes `claude-3-*`, Opus 4.0/4.1, Sonnet 4.0/4.5 and Haiku 4.5, forces `claude-mythos-5` on, and else sends it on first-party: so Opus 4.5 and Mythos 5 are in the list without the `effort` capability. An unlisted model gets no alert, because a new model is expected to have `per_turn_effort`.
+- Claude Code turns the beta off with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, and off providers other than first-party, Anthropic AWS/Google Cloud, Foundry and Mantle. The statusline checks the env vars it can see (`CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_BEDROCK` without `CLAUDE_CODE_USE_MANTLE`): then every model alerts. Not detected: HIPAA orgs and the server kill switch.
+- To update the list: in the binary, read the model registry (`capabilities:[...]` per `{id:"claude-...`) and the function that sends effort (the one with the `claude-mythos-5` special case). Effort sent and no `per_turn_effort` → in the list.
 
 ### Notification Files (`~/.claude/.cache-notif-<session_prefix>`)
 

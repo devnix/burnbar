@@ -243,6 +243,22 @@ case "${model_id%%\[*}" in  # without a "[1m]" suffix
   *)                                   price_in=0;    model_family="unknown" model_known=0 ;;
 esac
 
+# ── Effort change and the cache ───────────────────────────────────────────────
+#   Claude Code sends an effort change as a per-turn system message (beta
+#   per-turn-control) on the models with the per_turn_effort capability: Fable
+#   5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 (2.1.301). There the cache stays. On
+#   the models below, the change rewrites the whole cache. Without the beta
+#   (experimental betas off, Vertex, Bedrock without Mantle), every model does.
+#   An unlisted (newer) model is assumed to keep the cache.
+effort_breaks_cache=0
+case "${model_id%%\[*}" in
+  *opus-4-[5678]*|*opus-5|*sonnet-4-6*|*sonnet-5|*fable-5|*mythos-5*) effort_breaks_cache=1 ;;
+esac
+if [ -n "${CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS:-}" ] || [ -n "${CLAUDE_CODE_USE_VERTEX:-}" ] ||
+   { [ -n "${CLAUDE_CODE_USE_BEDROCK:-}" ] && [ -z "${CLAUDE_CODE_USE_MANTLE:-}" ]; }; then
+  effort_breaks_cache=1
+fi
+
 # ── Header ────────────────────────────────────────────────────────────────────
 _user="${USER:-$(whoami)}"
 _host="${HOSTNAME%%.*}"
@@ -602,6 +618,16 @@ _total="total:\033[01;31m\$${total_cost}\033[00m"
 _delta="delta:\033[01;36m\$${last_delta}\033[00m"
 
 # ── Cache timer rendering ─────────────────────────────────────────────────────
+# _model_key var id — one key per model version, for every provider's id form:
+# "claude-" onward, without "[1m]", "@date" (Vertex), "-v1:0" (Bedrock) or a
+# "-YYYYMMDD" date. Empty id → "none".
+_model_key() {
+  local v=$2
+  case "$v" in *claude-*) v="claude-${v#*claude-}" ;; esac
+  v=${v%%\[*}; v=${v%%@*}; v=${v%%-v[0-9]*}
+  case "$v" in *-20[0-9][0-9][0-9][0-9][0-9][0-9]) v=${v%-*} ;; esac
+  printf -v "$1" '%s' "${v:-none}"
+}
 _cache=""
 if [ "$has_cache" = 1 ]; then
   cache_alert=""
@@ -614,12 +640,34 @@ if [ "$has_cache" = 1 ]; then
       meta_ts="" meta_model="" meta_effort=""
     fi
 
+    # The cache belongs to one model version: compare the id, not the family.
+    # "[1m]" counts only on the 200K models where it sends the 1M beta; on the
+    # native-1M models it changes nothing. A meta file written before held the
+    # family.
+    _model_key model_key "$model_id"
+    case "$model_id" in
+      *sonnet-4-[056]*\[1m\]|*sonnet-4-2025*\[1m\]|*opus-4-6*\[1m\]) model_key="${model_key}[1m]" ;;
+    esac
     if [ -z "$meta_model" ] || [ "$meta_ts" != "$last" ]; then
-      printf '%s|%s|%s\n' "$last" "$model_family" "$current_effort" > "$meta_file"
-    else
-      { [ "$meta_model" != "$model_family" ]; } && cache_alert="model"
-      { [ -z "$cache_alert" ] && [ -n "$current_effort" ] && [ "$meta_effort" != "$current_effort" ]; } && cache_alert="effort"
+      # The baseline is the model of the last API call: the hook reads it from
+      # the transcript (.cache-model-<key>, "epoch|model", written before the
+      # timestamp). Only a file of this API call counts. Else (a prompt, no
+      # transcript) the current model: the prompt goes to it.
+      base_key="$model_key" _cm_ts="" _cm_model="" _cm_key=""
+      _cm_file="$CONFIG_DIR/.cache-model-$cache_key"
+      [ -f "$_cm_file" ] && IFS='|' read -r _cm_ts _cm_model < "$_cm_file"
+      if [ "$_cm_ts" = "$last" ]; then
+        case "$_cm_model" in
+          *claude-*) _model_key _cm_key "$_cm_model"
+                     [ "$_cm_key" != "${model_key%\[1m\]}" ] && base_key="$_cm_key" ;;
+        esac
+      fi
+      printf '%s|%s|%s\n' "$last" "$base_key" "$current_effort" > "$meta_file"
+      meta_model="$base_key" meta_effort="$current_effort"
     fi
+    case "$meta_model" in opus|sonnet|haiku|fable|unknown) model_key="$model_family" ;; esac
+    { [ "$meta_model" != "$model_key" ]; } && cache_alert="model"
+    { [ -z "$cache_alert" ] && [ "$effort_breaks_cache" = 1 ] && [ -n "$current_effort" ] && [ "$meta_effort" != "$current_effort" ]; } && cache_alert="effort"
   fi
 
   # Green above 40% of the TTL, yellow above 20% (2:00 / 1:00 on a 5m cache)

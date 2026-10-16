@@ -30,7 +30,7 @@ _sid="${CLAUDE_CODE_SESSION_ID:0:8}"
 [ -n "$_sid" ] && rm -f "$CONFIG_DIR/.cache-ts-$_sid" "$CONFIG_DIR/.cache-notif-$_sid" \
   "$CONFIG_DIR/.turn-ts-$_sid" "$CONFIG_DIR/.cost-hist-$_sid"
 find "$CONFIG_DIR" -maxdepth 1 \( -name '.cache-ts-*' -o -name '.cache-meta-*' -o -name '.cache-notif-*' \
-  -o -name '.turn-ts-*' -o -name '.cost-hist-*' -o -name '.cache-ttl-*' \) -mtime +1 -delete 2>/dev/null
+  -o -name '.turn-ts-*' -o -name '.cost-hist-*' -o -name '.cache-ttl-*' -o -name '.cache-model-*' \) -mtime +1 -delete 2>/dev/null
 
 # Ensure settings file exists
 if [ ! -f "$SETTINGS_FILE" ]; then

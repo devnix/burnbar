@@ -169,6 +169,8 @@ The timer resets on every API call — when you submit a message (`UserPromptSub
 
 When the cache is created, Burnbar records the current model and effort level (per-session, using `session_id`). If you switch models or effort without sending a new message, a **`⚠ model`** or **`⚠ effort`** alert appears — the existing cache may not apply. The alert clears on your next API call.
 
+`⚠ effort` shows only on the models where an effort change rewrites the cache: Opus 4.5–4.8, Opus 5, Sonnet 4.6, Sonnet 5, Fable 5, Mythos 5 and Mythos 5.1. On Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, Claude Code sends the change as a per-turn message and the cache stays. Exception: with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, on Vertex, or on Bedrock without Mantle, Claude Code cannot send that message, so every model alerts.
+
 ### Per-workspace isolation
 
 Each workspace gets its own cache timer. On session start, the cache is cleared automatically so stale data from previous sessions never causes false alerts. Timestamp files live at `~/.claude/.cache-ts-<hash>` (or `$CLAUDE_CONFIG_DIR/.cache-ts-<hash>` for secondary profiles). Clean up with `rm ~/.claude/.cache-ts-*`.
