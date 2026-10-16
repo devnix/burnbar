@@ -6,6 +6,16 @@ After each change, run `make`. The change is done only on a green `make` (exit 0
 
 `make` mirrors the Linux CI jobs. The macOS job (stock `/bin/bash` 3.2, BSD `date`/`stat`, the Keychain branch) runs only in CI: when a change touches these paths, tell the user.
 
+## Branches and Worktrees
+
+A branch name is `<type>/<slug>`. `<type>` is the Conventional Commits type of the change (`feat`, `fix`, `perf`, `ci`, `docs`, `refactor`, `test`, `chore`). `<slug>` is a short kebab-case name. Example: `perf/bash32-tag-scan`.
+
+`EnterWorktree` with `name` creates the branch `worktree-<name>`, which does not obey this convention. To create a worktree, do these steps:
+
+1. `git fetch origin main`
+2. `git worktree add -b <type>/<slug> .claude/worktrees/<slug> origin/main`
+3. `EnterWorktree` with `path: .claude/worktrees/<slug>`
+
 ## Release Workflow
 
 The plugin version is hardcoded in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` — the plugin system reads it from there, not from the git tag. Always bump the version in both files **before** tagging:
