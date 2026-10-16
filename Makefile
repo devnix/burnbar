@@ -37,10 +37,11 @@ manifests:
 # Functional tests. TEST_BASH selects the bash under test (macOS: /bin/bash).
 test:
 	bash tests/cache-ttl.sh
+	bash tests/live-delta.sh
 
 test-bash32:
 	docker run --rm -v "$$PWD":/w:ro $(BASH32_IMAGE) \
-	  bash -c 'apk add -q jq coreutils; bash /w/tests/cache-ttl.sh'
+	  bash -c 'apk add -q jq coreutils; bash /w/tests/cache-ttl.sh && bash /w/tests/live-delta.sh'
 
 # On Linux, strace is required: without it perf.sh silently skips the fork gate.
 perf:

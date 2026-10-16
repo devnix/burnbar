@@ -78,8 +78,8 @@ Available tags:
 | `{next}` | Former name of `{miss}` (an alias) |
 | `{total}` | Total session cost |
 | `{cache}` | Cache TTL bar + `MM:SS` countdown |
-| `{spark}` | Per-turn cost sparkline |
-| `{delta}` | Last turn's cost |
+| `{spark}` | Per-turn cost sparkline (the last column grows with the current turn) |
+| `{delta}` | Cost of the current turn, live; between turns, of the last turn |
 | `{monthly}` | Billed spend of the billing period + plan limit bar (claude.ai plan-usage endpoint) |
 | `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar shown when `BURNBAR_DAILY_BUDGET` is set |
 | `{5h}` | 5-hour plan-usage meter (bar + `%` + `↺HH:MM`); Pro/Max only, absent otherwise |

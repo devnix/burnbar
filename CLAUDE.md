@@ -203,7 +203,9 @@ Robustness invariants:
 
 The sparkline always renders at `SPARK_WIDTH` cells — unused cells are padded with `UNFILLED_BG` (grey, same as other bars). Data characters use cyan foreground on the same grey background. This keeps the layout stable regardless of how many turns have been recorded.
 
-The `{delta}` tag shows the last turn's cost as a labeled value (e.g., `delta:$0.0312`). It is extracted as the last element of the sparkline history array in the shared awk call and output before `spark_newhist` — `spark_newhist` must remain the last field in `read` because it contains spaces.
+**Live turn**: on a tick with no new marker and a valid baseline, `live = total - baseline` is the value the next `Stop` records. When it is ≥ $0.00005, awk appends it to the render array only (`rn = n + 1`; `snew` stops at `n`, so it is never persisted and no file is written on a live tick). It takes part in the window max, so the older bars shrink when it becomes the max. At `Stop`, the recorded delta takes the same index: the braille/octant pairing does not shift. Cost that arrives between turns (after `Stop`) shows as live and goes into the next delta, as before. No separate color: in braille/octant the live column shares its cell with the previous turn. `tests/live-delta.sh` covers it.
+
+The `{delta}` tag shows the last element of the render array as a labeled value (e.g., `delta:$0.0312`): the live turn while it runs, else the last recorded turn. It is output before `spark_newhist` — `spark_newhist` must remain the last field in `read` because it contains spaces.
 
 Levels are quantized in the existing single awk call at the mode's native resolution (`lmax`: 0–8 for blocks, 0–4 per column for braille/octant), scaled to the window max with nonzero deltas flooring at 1, and emitted as a digit string — awk owns all numeric scaling, bash does pure table lookup on the digits. Braille/octant index hardcoded 25-entry tables with `left_level*5 + right_level`:
 
