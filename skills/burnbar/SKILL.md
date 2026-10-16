@@ -74,7 +74,8 @@ Available tags:
 | `{bar}` | Context window progress bar |
 | `{pct}` | Context window percentage |
 | `{ctx}` | Context tokens (formatted, e.g. `ctx:32.0k`) |
-| `{next}` | Estimated cost of next message |
+| `{miss}` | Cost of the next message on a cache miss (context × cache-write price); red when the cache has expired |
+| `{next}` | Former name of `{miss}` (an alias) |
 | `{total}` | Total session cost |
 | `{cache}` | Cache TTL bar + `MM:SS` countdown |
 | `{spark}` | Per-turn cost sparkline |
@@ -96,6 +97,7 @@ Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format 
 4. If they want to change bar widths, prepend the relevant var:
    - `BURNBAR_BAR_WIDTH=N` — context bar (default 20)
    - `BURNBAR_CACHE_WIDTH=N` — cache bar (default 8)
+   - `BURNBAR_CACHE_TTL=N` — cache TTL in seconds (default: detected per session from the transcript, 300 or 3600)
    - `BURNBAR_5H_WIDTH=N` — 5h plan meter bar (default 8)
    - `BURNBAR_WEEKLY_WIDTH=N` — 7-day plan meter bar (default 8)
 5. If they want spend budgets (enables the bar in `{monthly}`/`{daily}`), prepend `BURNBAR_DAILY_BUDGET=N` (in the plan's currency). `BURNBAR_MONTHLY_BUDGET=N` only applies when the plan reports no limit of its own
@@ -108,7 +110,7 @@ Example commands (`/home/user/.claude` stands for the resolved config dir):
 
 ```
 # Default (all elements, colored header)
-BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{next}{sep}{total}{sep}[[cache: {cache}]]{sep}{delta} {spark}{sep}{monthly}{sep}{daily}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Hide costs (screen sharing)
 BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}' bash "/home/user/.claude/burnbar-statusline.sh"
@@ -117,7 +119,7 @@ BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{mode
 BURNBAR_FORMAT='{bar} {pct}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Costs only
-BURNBAR_FORMAT='{next}{sep}{total}' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='{miss}{sep}{total}' bash "/home/user/.claude/burnbar-statusline.sh"
 ```
 
 ## Important

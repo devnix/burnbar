@@ -113,6 +113,20 @@ Claude Code runs the statusline command **for all active sessions**, not just th
 - Statusline reads the same key via `${session_id:0:8}` from its JSON input
 - Cleared on `SessionStart` to avoid stale data from previous sessions.
 
+### TTL Files (`~/.claude/.cache-ttl-<session_prefix>`)
+
+Claude Code picks the cache TTL per user: 1h for subscribers (behind an allowlist and a feature flag), 1h with `ENABLE_PROMPT_CACHING_1H` or a setting, else 5m. The statusline JSON has no TTL: `current_usage` carries only the four token totals, not the `cache_creation` breakdown (checked in the 2.1.301 binary).
+
+- Written by the `Stop` hook (once per turn, off the hot path). It reads `transcript_path` from the hook stdin with a bash regex, then takes the last `"isSidechain":false` entry in the last 256 KB of the transcript. `ephemeral_1h_input_tokens > 0` → `3600`, `ephemeral_5m_input_tokens > 0` → `300`, no write → keep the file. Take the last entry, never a sum: one session mixed 1h and 5m writes.
+- Statusline: `BURNBAR_CACHE_TTL`, else one `read` of the file (only `300`/`3600` are valid), else `300`.
+- Do not infer the TTL from the auth type or from `rate_limits`: the binary decides it through an allowlist, a feature flag and a "keep 5m" path, so the plan alone does not tell it.
+- The colors scale with the TTL (green > 40%, yellow > 20%). The notification stays at 50%: 30 min left on a 1h cache.
+- Not cleared on `SessionStart` (a resumed session keeps its TTL); stale files (>1 day) are cleaned with the others.
+
+### Cache-Miss Cost (`{miss}`, alias `{next}`)
+
+`miss = ctx × price_in × (2 for 1h | 1.25 for 5m)`: the whole context written to the cache again. Only the base input price is needed. The `case` matches the version (specific globs first, `[1m]` suffix stripped); an unlisted version of a known family gets the newest price of that family. Haiku 5.5 has a long-context tier (`price_lc`/`price_lc_in`), chosen in awk from `ctx`. `{next}` was the old "current context at last call's cache split" estimate; it is now an alias, so user formats keep working.
+
 ### Metadata Files (`~/.claude/.cache-meta-<session_prefix>`)
 
 - Key = first 8 chars of `session_id` (per-session isolation)

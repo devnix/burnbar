@@ -71,6 +71,7 @@ for _stub in curl security; do printf '#!/bin/sh\nexit 1\n' > "$BIN/$_stub"; chm
 NOW=$(date +%s); SID="perftest-0000-0000"; KEY="${SID:0:8}"; TODAY=$(date +%F)
 echo '{"claudeAiOauth":{"accessToken":"x","expiresAt":9999999999999}}' > "$CFG/.credentials.json"
 echo "$(( NOW - 30 ))" > "$CFG/.cache-ts-$KEY"                     # cache timer mid-TTL
+echo 3600 > "$CFG/.cache-ttl-$KEY"                                  # TTL read by the hook
 echo "m1" > "$CFG/.turn-ts-$KEY"                                    # == history marker:
 printf 'm1\n1.0000\n%s\n' "0.0100 0.0500 0.1200 0.0300 0.2500 0.0800 0.0150 0.3100 \
 0.0400 0.0900 0.1700 0.0200 0.0600 0.2200 0.1100 0.0350" > "$CFG/.cost-hist-$KEY"  # no rewrite
@@ -128,7 +129,7 @@ echo "Burnbar perf — $("$TEST_BASH" -c 'echo bash $BASH_VERSION'), $RUNS runs"
 
 # Sanity: the fixture renders every data tag (an empty tag would hide its cost).
 out=$(tick -- "$DEFAULT_FMT" 300 | sed 's/\x1b\[[0-9;]*m//g')
-for want in 'ctx:' 'next:' 'total:' 'cache:' 'delta:' '5h:' '1w:' 'mo:$92.37' 'day:$1.05'; do
+for want in 'ctx:' 'miss:$0.7408' 'total:' 'cache:' 'delta:' '5h:' '1w:' 'mo:$92.37' 'day:$1.05'; do
   [[ "$out" == *"$want"* ]] || { echo "  FAIL  fixture: '$want' missing from output"; fail=1; }
 done
 

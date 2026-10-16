@@ -8,6 +8,7 @@
 #                         optional group that survives iff ≥1 {tag} inside it is non-empty.
 #   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 20)
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8)
+#   BURNBAR_CACHE_TTL   — cache TTL in seconds (default: detected per session, 300 or 3600)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
 #   BURNBAR_MONTHLY_BUDGET — monthly budget in the plan's currency, only used when the
@@ -54,7 +55,7 @@ fi
 
 # Format string — resolved up front so data sources can skip work for tags the
 # format does not use.
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{next}{sep}{total}{sep}[[cache: {cache}]]{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
 _fmt="${BURNBAR_FORMAT:-$_default_fmt}"
 
 # ── Billed spend (claude.ai plan-usage endpoint, 5-min cache) ─────────────────
@@ -221,19 +222,24 @@ jq_out=$(jq -r '
 ' <<< "$input") && eval "$jq_out"
 
 # ── Pricing + model family ────────────────────────────────────────────────────
-case "$model_id" in
-  *opus*)
-    price_in=5.0;  price_cw=6.25; price_cr=0.50; model_family="opus";    model_known=1
-    ;;
-  *haiku*)
-    price_in=1.0;  price_cw=1.25; price_cr=0.10; model_family="haiku";   model_known=1
-    ;;
-  *sonnet*)
-    price_in=3.0;  price_cw=3.75; price_cr=0.30; model_family="sonnet";  model_known=1
-    ;;
-  *)
-    price_in=0;    price_cw=0;    price_cr=0;    model_family="unknown"; model_known=0
-    ;;
+#   Base input price ($/MTok) — the cache-miss cost is a multiple of it. The
+#   price changes per version, not per family: the specific globs go first. An
+#   unlisted version of a known family gets the newest price of that family.
+#   price_lc/price_lc_in: above price_lc tokens of context, the input price is
+#   price_lc_in (Haiku 5.5; 0 = no long-context tier).
+price_lc=0 price_lc_in=0 model_known=1
+case "${model_id%%\[*}" in  # without a "[1m]" suffix
+  *fable*|*mythos*)                    price_in=10;   model_family="fable" ;;
+  *opus-4-1*|*opus-4-2025*|*3-opus*)   price_in=15;   model_family="opus" ;;
+  *opus-4-*|*opus-5-2*|*opus-5)        price_in=5;    model_family="opus" ;;
+  *opus*)                              price_in=4;    model_family="opus" ;;
+  *sonnet-4*|*3-7-sonnet*|*3-5-sonnet*) price_in=3;   model_family="sonnet" ;;
+  *sonnet*)                            price_in=2;    model_family="sonnet" ;;
+  *haiku-4*)                           price_in=1;    model_family="haiku" ;;
+  *3-5-haiku*)                         price_in=0.80; model_family="haiku" ;;
+  *3-haiku*)                           price_in=0.25; model_family="haiku" ;;
+  *haiku*)                             price_in=0.10; model_family="haiku" price_lc=100000 price_lc_in=0.50 ;;
+  *)                                   price_in=0;    model_family="unknown" model_known=0 ;;
 esac
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -243,12 +249,22 @@ _cwd="$cwd"
 
 # ── Cache timer: read timestamp before awk ────────────────────────────────────
 BAR_WIDTH="${BURNBAR_BAR_WIDTH:-20}"
-CACHE_TTL=300
 CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-8}"
 FH_BAR_WIDTH="${BURNBAR_5H_WIDTH:-8}"
 UNFILLED_BG="47"
 
 cache_key="${session_id:0:8}"
+# Cache TTL: BURNBAR_CACHE_TTL, else the one the Stop hook read from the
+# transcript (300 or 3600), else 300 (the API default, until the first turn).
+CACHE_TTL="${BURNBAR_CACHE_TTL:-}"
+case "$CACHE_TTL" in
+  ''|0|*[!0-9]*)
+    CACHE_TTL=""
+    [ -f "$CONFIG_DIR/.cache-ttl-$cache_key" ] && read -r CACHE_TTL < "$CONFIG_DIR/.cache-ttl-$cache_key"
+    case "$CACHE_TTL" in 300|3600) ;; *) CACHE_TTL=300 ;; esac ;;
+esac
+# Cache-write price multiplier of the base input price: 2x for 1h, 1.25x for 5m
+if [ "$CACHE_TTL" -gt 300 ]; then cache_wmul=2; else cache_wmul=1.25; fi
 ts_file="$CONFIG_DIR/.cache-ts-$cache_key"
 remaining=0
 has_cache=0
@@ -391,7 +407,7 @@ _detect_cols() {
 
 
 # ── All numeric computation (single awk call) ────────────────────────────────
-read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
+read -r used_pct_int filled_full partial_idx ctx_fmt miss_cost total_cost \
   cache_filled_full cache_partial_idx spark_levels last_delta \
   spend_pct monthly_filled monthly_partial \
   daily_pct daily_filled daily_partial \
@@ -399,7 +415,7 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
   spark_newhist <<< "$(
   LC_NUMERIC=C awk -v pct="$used_pct" -v bw="$BAR_WIDTH" \
       -v it="$input_toks" -v cwt="$cw_toks" -v crt="$cr_toks" \
-      -v pin="$price_in" -v pcw="$price_cw" -v pcr="$price_cr" \
+      -v pin="$price_in" -v plc="$price_lc" -v plcin="$price_lc_in" -v wmul="$cache_wmul" \
       -v traw="$total_cost_raw" \
       -v rem="$remaining" -v ttl="$CACHE_TTL" -v cbw="$CACHE_BAR_WIDTH" \
       -v srec="$spark_record" -v sb="$spark_base" -v shist="$spark_hist" \
@@ -421,7 +437,10 @@ read -r used_pct_int filled_full partial_idx ctx_fmt current_cost total_cost \
     if (ctx >= 1000) cfmt = sprintf("%.1fk", ctx / 1000)
     else cfmt = sprintf("%d", ctx)
 
-    cost = (it * pin + cwt * pcw + crt * pcr) / 1000000
+    # Cache miss: the whole context is written to the cache again, at the
+    # cache-write rate of the session TTL
+    if (plc > 0 && ctx > plc) pin = plcin
+    cost = ctx * pin * wmul / 1000000
     cost = int(cost * 10000 + 0.5) / 10000
 
     tc = int(traw * 10000 + 0.5) / 10000
@@ -554,11 +573,15 @@ _bar="$_bar_out"
 # ── Computed fields ───────────────────────────────────────────────────────────
 _pct="${used_pct_int}%"
 _ctx="ctx:\033[${level_bold}m${ctx_fmt}\033[00m"
+# {miss}: cost of the next message on a cache miss. Red when the cache has
+# expired: the next message pays it. {next} is its former name (an alias).
 if [ "$model_known" = 1 ]; then
-  _next="next:\033[01;33m\$${current_cost}\033[00m"
+  if [ "$has_cache" = 1 ] && [ "$remaining" -eq 0 ]; then _miss_c="01;31"; else _miss_c="01;33"; fi
+  _miss="miss:\033[${_miss_c}m\$${miss_cost}\033[00m"
 else
-  _next="next:\033[01;33m⚠ unknown model: ${model_id}\033[00m"
+  _miss="miss:\033[01;33m⚠ unknown model: ${model_id}\033[00m"
 fi
+_next="$_miss"
 _total="total:\033[01;31m\$${total_cost}\033[00m"
 _delta="delta:\033[01;36m\$${last_delta}\033[00m"
 
@@ -583,9 +606,10 @@ if [ "$has_cache" = 1 ]; then
     fi
   fi
 
-  if [ "$remaining" -gt 120 ]; then
+  # Green above 40% of the TTL, yellow above 20% (2:00 / 1:00 on a 5m cache)
+  if [ $((remaining * 5)) -gt $((CACHE_TTL * 2)) ]; then
     cache_fg="32"; cache_bg="42"
-  elif [ "$remaining" -gt 60 ]; then
+  elif [ $((remaining * 5)) -gt "$CACHE_TTL" ]; then
     cache_fg="33"; cache_bg="43"
   else
     cache_fg="31"; cache_bg="41"
@@ -769,7 +793,7 @@ while [[ "$_rest" == *'{'* ]]; do
   _res+="${_rest%%\{*}"; _rest="${_rest#*\{}"
   _tag="${_rest%%\}*}"
   case "$_tag" in
-    user|host|cwd|model|bar|pct|ctx|next|total|spark|cache|delta|monthly|daily|5h|1w)
+    user|host|cwd|model|bar|pct|ctx|miss|next|total|spark|cache|delta|monthly|daily|5h|1w)
       if [ "$_tag" != "$_rest" ]; then  # a closing } exists
         _vn="_$_tag"; _res+="${!_vn}"; _rest="${_rest#*\}}"
         continue

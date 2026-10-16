@@ -6,7 +6,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ## Features
 
-- **Cache TTL countdown** ⭐ — progress bar + `MM:SS` timer tracking the 5-minute prompt cache window. When half the time is gone, Burnbar fires a notification using Claude Code's own notification settings (terminal bell, iTerm2, Ghostty, Kitty — whatever you have configured). No more paying to re-warm a cache you didn't know had expired.
+- **Cache TTL countdown** ⭐ — progress bar + `MM:SS` timer tracking the prompt cache window (5 minutes or 1 hour, detected per session), next to the cost of a cache miss. When half the time is gone, Burnbar fires a notification using Claude Code's own notification settings (terminal bell, iTerm2, Ghostty, Kitty — whatever you have configured). No more paying to re-warm a cache you didn't know had expired.
 - **Context window progress bar** with color gradient (green → yellow → red)
 - **Partial block characters** (▏▎▍▌▋▊▉) for smooth, sub-cell precision
 - **Token count** showing current context size, color-matched to usage level
@@ -87,7 +87,8 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{bar}` | Context window progress bar with color gradient |
 | `{pct}` | Usage percentage (e.g., "47%") |
 | `{ctx}` | Current context tokens (e.g., "ctx:94.2k") |
-| `{next}` | Estimated cost of the next message |
+| `{miss}` | Cost of the next message on a cache miss (e.g., "miss:$1.2160"); red when the cache has expired. See [Pricing model](#pricing-model) |
+| `{next}` | Former name of `{miss}` (an alias) |
 | `{total}` | Cumulative session cost |
 | `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline)) |
 | `{delta}` | Last turn's cost delta (e.g., "delta:$0.0312") |
@@ -109,7 +110,7 @@ contain `{sep}`/`{wrap}`.
 Default (when `BURNBAR_FORMAT` is not set):
 
 ```bash
-'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{next}{sep}{total}{sep}[[cache: {cache}]]{sep}{delta} {spark}{sep}{monthly}{sep}{daily}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]'
+'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
 ```
 
 Examples:
@@ -122,10 +123,10 @@ export BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m
 export BURNBAR_FORMAT='{bar}  {pct}'
 
 # Custom separator and emoji
-export BURNBAR_FORMAT='{model} ·· {bar} {pct} 🔥 {ctx}  {next}'
+export BURNBAR_FORMAT='{model} ·· {bar} {pct} 🔥 {ctx}  {miss}'
 
 # Single line, no header
-export BURNBAR_FORMAT='{model}  {bar}  {pct}  {ctx}  {next}  {total}  {cache}'
+export BURNBAR_FORMAT='{model}  {bar}  {pct}  {ctx}  {total}  {cache} {miss}'
 ```
 
 ### `BURNBAR_BAR_WIDTH`
@@ -150,14 +151,16 @@ You can set variables inline in your `~/.claude/settings.json`:
 
 ## Cache timer
 
-The prompt cache has a 5-minute TTL — after expiration, your next message reprocesses the entire conversation (higher latency, higher cost). The `{cache}` tag shows a progress bar that drains over 5 minutes with a `MM:SS` countdown, so you can decide whether to keep going or start fresh.
+The prompt cache has a TTL of 5 minutes or 1 hour — after expiration, your next message reprocesses the entire conversation (higher latency, higher cost; `{miss}` shows how much). The `{cache}` tag shows a progress bar that drains over the TTL with a `MM:SS` countdown, so you can decide whether to keep going or start fresh.
+
+Claude Code picks the TTL per user (subscription, settings, `ENABLE_PROMPT_CACHING_1H`). Burnbar reads it from the session transcript at the end of each turn (the `Stop` hook): the last cache write tells 5m or 1h. Until the first turn ends, the timer assumes 5 minutes. To force a value, set `BURNBAR_CACHE_TTL` (seconds).
 
 | Color | Remaining | Meaning |
 |-------|-----------|---------|
 | Grey | `--:--` | No API call yet (session just started) |
-| Green | > 2 min | Cache is warm |
-| Yellow | 1–2 min | Approaching expiration |
-| Red | < 1 min | Near expiration / expired |
+| Green | > 40% of the TTL (> 2 min on a 5m cache) | Cache is warm |
+| Yellow | 20–40% (1–2 min) | Approaching expiration |
+| Red | < 20% (< 1 min) | Near expiration / expired |
 
 The timer resets on every API call — when you submit a message (`UserPromptSubmit`) or Claude uses a tool (`PostToolUse`). Before your first interaction, the bar renders in a neutral grey state with `--:--`.
 
@@ -217,15 +220,32 @@ export BURNBAR_SPARK_WIDTH=12
 
 ## Pricing model
 
-Cost estimates use the following rates (per 1M tokens):
+The `total` cost uses Claude Code's authoritative `cost.total_cost_usd` field.
 
-| Model | Input | Cache Write | Cache Read |
-|-------|-------|------------|------------|
-| Opus | $15.00 | $18.75 | $1.50 |
-| Sonnet | $3.00 | $3.75 | $0.30 |
-| Haiku | $0.80 | $1.00 | $0.08 |
+The `miss` cost is what the next message costs on a cache miss: the whole current context is written to the cache again.
 
-The `total` cost uses Claude Code's authoritative `cost.total_cost_usd` field. The `next` cost is an estimate of the current context input cost.
+```
+miss = context tokens × base input price × (1.25 on a 5m cache | 2 on a 1h cache)
+```
+
+It is a lower bound for that message: it excludes the output, the thinking, and the tool calls of the turn. While the cache is warm, the next message pays much less (cache reads), so `{delta}` is the better guide for the cost of a turn. `{miss}` tells you what waiting until the timer runs out costs.
+
+Base input prices (per 1M tokens, Anthropic API, 2026-10):
+
+| Model | Input |
+|-------|-------|
+| Fable 5 / 5.1, Mythos | $10.00 |
+| Opus 5.5 | $4.00 |
+| Opus 5, Opus 4.5–4.8 | $5.00 |
+| Opus 4 / 4.1, Opus 3 | $15.00 |
+| Sonnet 5 / 5.5 | $2.00 |
+| Sonnet 3.5–4.6 | $3.00 |
+| Haiku 5.5 | $0.10 (≤ 100K context), $0.50 above |
+| Haiku 4.5 | $1.00 |
+| Haiku 3.5 | $0.80 |
+| Haiku 3 | $0.25 |
+
+An unlisted version of a known family uses the newest price of that family. Not included: fast mode, Batch and Bedrock / Vertex prices.
 
 ## Uninstall
 
