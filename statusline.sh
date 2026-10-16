@@ -83,7 +83,8 @@ MONTHLY_BAR_WIDTH=8
 DAILY_BAR_WIDTH=8
 WEEKLY_BAR_WIDTH="${BURNBAR_WEEKLY_WIDTH:-8}"
 PLAN_TTL=300
-PLAN_MAX_AGE=3600
+PLAN_STALE_AGE=900       # an older reading is shown with a "~": 2 refreshes missed
+PLAN_MAX_BACKOFF=3600    # failed refreshes: the wait doubles from 5 min up to this
 # Cache line: used|limit|currency|enabled|epoch|day_baseline|day|daily
 PLAN_CACHE="${HOME}/.cache/burnbar-plan-spend-${CONFIG_DIR##*/}"
 PLAN_LOCK="${HOME}/.cache/burnbar-plan-spend-${CONFIG_DIR##*/}.lock"
@@ -114,7 +115,7 @@ _update_plan_spend() {
   # Read-only use of the token Claude Code keeps fresh. Never refresh it here:
   # a refresh rotates the refresh token and can log Claude Code out. On a
   # failure (401, 429, network, expired token) write nothing and keep the lock:
-  # the lock's 5-min age check in _spawn_refresh is the retry backoff.
+  # its attempt count sets the retry backoff in _spawn_refresh.
   _tok=$(_read_credentials | jq -r \
            '.claudeAiOauth | select((.expiresAt // 0) > now * 1000) | .accessToken // empty' 2>/dev/null)
   [ -n "$_tok" ] || return
@@ -167,24 +168,32 @@ _update_plan_spend() {
 }
 
 # Start a background refresh unless another one holds a lock younger than the
-# backoff (default 300 s).
+# backoff (default 300 s). The lock holds the attempts since the last success
+# (the job removes it on success): each failure doubles the wait, up to $4.
 # Redirect the job's stdout/stderr so it does not keep the statusline's stdout
 # pipe open: Claude Code reads stdout until EOF, which would otherwise block
 # until the (slow) refresh finishes.
-_spawn_refresh() {  # $1 = refresh function, $2 = lock file, $3 = backoff (s)
-  local _lock_mtime
+_spawn_refresh() {  # $1 = refresh function, $2 = lock file, $3 = backoff (s), $4 = max backoff (s)
+  local _lock_mtime _n=0 _i _wait="${3:-300}"
+  local _max="${4:-$_wait}"
   if [ -f "$2" ]; then
     # GNU stat -c, BSD/macOS stat -f. An unreadable mtime must not disable the
     # lock: that would turn a failing refresh into one request per tick.
     _lock_mtime=$(stat -c %Y "$2" 2>/dev/null || stat -f %m "$2" 2>/dev/null)
     case "$_lock_mtime" in ''|*[!0-9]*) return ;; esac
+    # An empty lock (an older Burnbar touched it) counts as 1 attempt.
+    read -r _n 2>/dev/null < "$2"
+    case "$_n" in ''|*[!0-9]*) _n=1 ;; esac
+    _i=$_n
+    while [ "$_i" -gt 1 ] && [ "$_wait" -lt "$_max" ]; do _wait=$(( _wait * 2 )) _i=$(( _i - 1 )); done
+    [ "$_wait" -gt "$_max" ] && _wait=$_max
     # shellcheck disable=SC2154  # _epoch assigns it (printf -v)
-    [ "$(( _spend_now - _lock_mtime ))" -lt "${3:-300}" ] && return
+    [ "$(( _spend_now - _lock_mtime ))" -lt "$_wait" ] && return
   fi
   # No lock, no spawn: without it nothing stops a new job every tick. macOS
   # often has no ~/.cache.
   [ -d "${2%/*}" ] || mkdir -p "${2%/*}" 2>/dev/null
-  touch "$2" 2>/dev/null || return
+  printf '%d\n' "$(( _n + 1 ))" 2>/dev/null > "$2" || return
   "$1" >/dev/null 2>&1 &
 }
 
@@ -196,13 +205,16 @@ if [[ "$_fmt" == *'{monthly}'* || "$_fmt" == *'{daily}'* ]] \
   [ -f "${PLAN_CACHE}" ] && IFS='|' read -r plan_used plan_limit plan_cur _ _plan_epoch \
     _ plan_day plan_daily < "${PLAN_CACHE}"
   case "$_plan_epoch" in ''|*[!0-9]*) _plan_epoch=0 ;; esac
-  [ "$(( _spend_now - _plan_epoch ))" -gt "$PLAN_TTL" ] && _spawn_refresh _update_plan_spend "$PLAN_LOCK"
+  [ "$(( _spend_now - _plan_epoch ))" -gt "$PLAN_TTL" ] \
+    && _spawn_refresh _update_plan_spend "$PLAN_LOCK" "$PLAN_TTL" "$PLAN_MAX_BACKOFF"
 fi
 
-# A reading older than PLAN_MAX_AGE is not shown. The plan's limit is the
-# monthly budget; BURNBAR_MONTHLY_BUDGET only applies when the plan has none.
-monthly_amt="" daily_amt="" monthly_budget="${BURNBAR_MONTHLY_BUDGET:-0}" spend_sym='$'
-if [ -n "$plan_used" ] && [ "$(( _spend_now - _plan_epoch ))" -le "$PLAN_MAX_AGE" ]; then
+# A reading older than PLAN_STALE_AGE is shown with a "~" before the amounts:
+# the endpoint can rate-limit (429) for hours. The plan's limit is the monthly
+# budget; BURNBAR_MONTHLY_BUDGET only applies when the plan has none.
+monthly_amt="" daily_amt="" monthly_budget="${BURNBAR_MONTHLY_BUDGET:-0}" spend_sym='$' spend_stale=""
+if [ -n "$plan_used" ]; then
+  [ "$(( _spend_now - _plan_epoch ))" -gt "$PLAN_STALE_AGE" ] && spend_stale="~"
   monthly_amt="$plan_used"
   [ "$plan_limit" != "0.00" ] && monthly_budget="${plan_limit%.00}"
   _strftime _today '%Y-%m-%d' "$_spend_now"
@@ -824,9 +836,9 @@ if [ -n "$monthly_amt" ]; then
   else _mbg=42; _mfg=32; fi
   if [ "${monthly_budget:-0}" != "0" ]; then
     _render_bar "$MONTHLY_BAR_WIDTH" "$monthly_filled" "$monthly_partial" "$_mfg" "$_mbg" 0
-    _monthly="mo:\033[${_mfg}m${spend_sym}${monthly_amt}/${spend_sym}${monthly_budget}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
+    _monthly="mo:\033[${_mfg}m${spend_stale}${spend_sym}${monthly_amt}/${spend_sym}${monthly_budget}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
   else
-    _monthly="mo:\033[01;36m${spend_sym}${monthly_amt}\033[0m"
+    _monthly="mo:\033[01;36m${spend_stale}${spend_sym}${monthly_amt}\033[0m"
   fi
 fi
 if [ -n "$daily_amt" ]; then
@@ -836,9 +848,9 @@ if [ -n "$daily_amt" ]; then
   else _dbg=42; _dfg=32; fi
   if [ "${BURNBAR_DAILY_BUDGET:-0}" != "0" ]; then
     _render_bar "$DAILY_BAR_WIDTH" "$daily_filled" "$daily_partial" "$_dfg" "$_dbg" 0
-    _daily="day:\033[${_dfg}m${spend_sym}${daily_amt}/${spend_sym}${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
+    _daily="day:\033[${_dfg}m${spend_stale}${spend_sym}${daily_amt}/${spend_sym}${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
   else
-    _daily="day:\033[01;36m${spend_sym}${daily_amt}\033[0m"
+    _daily="day:\033[01;36m${spend_stale}${spend_sym}${daily_amt}\033[0m"
   fi
 fi
 
