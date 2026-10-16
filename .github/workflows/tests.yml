@@ -32,11 +32,7 @@ jobs:
           sudo apt-get install -y -q strace
       - name: perf (bash 5)
         run: make perf
-      # Shared runners score the bash 3.2 segment-count ratio ~9.5-10x (6-7x
-      # locally). 13 still catches the extglob-class regressions (~31-40x).
       - name: perf (bash 3.2)
-        env:
-          PERF_MAX_RATIO: 13
         run: make perf-bash32
 
   perf-macos:
@@ -48,5 +44,4 @@ jobs:
       - name: perf (macOS /bin/bash)
         env:
           PERF_BASH: /bin/bash
-          PERF_MAX_RATIO: 13  # see perf-linux bash 3.2
         run: make perf

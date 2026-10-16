@@ -13,8 +13,8 @@
 #      MAX_SEG_RATIO x — catches super-linear escape handling. Today ~2-3x; the
 #      old extglob strip (${var//\\033\[*([0-9;])[A-Za-z]/}) scored ~40x.
 #   4. 4x more segments (the format body repeated) cost more than MAX_RATIO x —
-#      catches super-linear layout. Today ~2.5-3.1x: the [[ ]] and {sep}
-#      passes re-scan the whole line, mildly quadratic.
+#      catches super-linear layout. Today ~4x on bash 3.2; it was ~6-7x when
+#      the tags were 16 ${var//pat/rep} passes over the growing line.
 #
 # No network: a credentials file exists (so {monthly}/{daily} render from the
 # cache) but the plan cache is fresh, and curl/security are stubbed to fail.
@@ -31,9 +31,9 @@ SCRIPT="${PERF_SCRIPT:-$REPO/statusline.sh}"
 TEST_BASH="${PERF_BASH:-bash}"
 RUNS="${PERF_RUNS:-30}"
 # bash < 4.2 (stock macOS bash 3.2) has no strftime builtin: the tick's one
-# date(1) call forks (+2 forks/tick), and its string ops make the layout
-# passes more quadratic (~6x for 4x segments). Separate defaults keep the test
-# a regression guard on both, not a failure on the known 3.2 cost.
+# date(1) call forks (+2 forks/tick), and its string ops are slower and
+# noisier on shared runners. Separate defaults keep the test a regression
+# guard on both, not a failure on the known 3.2 cost.
 if [ "$("$TEST_BASH" -c 'echo $(( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] ))')" -ge 402 ]; then
   _d_budget=60 _d_forks=6 _d_ratio=5
 else

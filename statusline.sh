@@ -752,22 +752,26 @@ while [[ "$_out" == *'[['* ]]; do
   fi
 done
 
-_out="${_out//\{user\}/$_user}"
-_out="${_out//\{host\}/$_host}"
-_out="${_out//\{cwd\}/$_cwd}"
-_out="${_out//\{model\}/$_model}"
-_out="${_out//\{bar\}/$_bar}"
-_out="${_out//\{pct\}/$_pct}"
-_out="${_out//\{ctx\}/$_ctx}"
-_out="${_out//\{next\}/$_next}"
-_out="${_out//\{total\}/$_total}"
-_out="${_out//\{spark\}/$_spark}"
-_out="${_out//\{cache\}/$_cache}"
-_out="${_out//\{delta\}/$_delta}"
-_out="${_out//\{monthly\}/$_monthly}"
-_out="${_out//\{daily\}/$_daily}"
-_out="${_out//\{5h\}/$_5h}"
-_out="${_out//\{1w\}/$_1w}"
+# ── Tag substitution: one left-to-right scan ──────────────────────────────────
+#   Each {tag} expands once, in document order; a value is never scanned again.
+#   Do not use one ${_out//\{tag\}/...} per tag: on bash 3.2 each one is
+#   quadratic in the line length, and 16 of them over the growing line cost
+#   ×60 for 4x segments. The whitelist keeps {out}, {i}... from leaking
+#   internal variables. {sep}, {wrap}, unknown tags and a lone { stay literal.
+_res="" _rest="$_out"
+while [[ "$_rest" == *'{'* ]]; do
+  _res+="${_rest%%\{*}"; _rest="${_rest#*\{}"
+  _tag="${_rest%%\}*}"
+  case "$_tag" in
+    user|host|cwd|model|bar|pct|ctx|next|total|spark|cache|delta|monthly|daily|5h|1w)
+      if [ "$_tag" != "$_rest" ]; then  # a closing } exists
+        _vn="_$_tag"; _res+="${!_vn}"; _rest="${_rest#*\}}"
+        continue
+      fi ;;
+  esac
+  _res+="{"
+done
+_out="$_res$_rest"
 
 # ── Collapse empty {sep} segments (before the wrap/sep loop) ───────────────────
 #   An emptied tag or a dropped [[ ]] group leaves an empty segment between two

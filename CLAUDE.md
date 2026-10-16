@@ -228,6 +228,7 @@ The script runs every 1 second. Minimize subprocess forks.
 
 - **Separate jq calls** per field — each is 2 forks (subshell + jq). 10 calls = 20 forks.
 - **Shell functions that pipe to awk** (`cell_bg`, `cell_fg`) called in a loop — up to 90 forks for BAR_WIDTH=30.
+- **One `${var//pat/rep}` per tag** over the growing line — quadratic on bash 3.2 (×60 for 4x segments), and on bash ≥ 5.2 an `&` in the value expands to the match (`patsub_replacement`). The tags expand in one left-to-right scan.
 - **`tostring` without `@sh`** for numeric jq fields in eval — vulnerable to injection if the field is ever string-typed.
 
 ### Benchmark Reference
