@@ -17,13 +17,16 @@ printf '%s\n' "$now" > "$CONFIG_DIR/.cache-ts-$key"
 # snapshots the cumulative cost when it changes. The $RANDOM suffix keeps
 # markers distinct even for turns ending within the same second (the marker
 # is an opaque string to the statusline).
-[ "$1" = "Stop" ] || exit 0
-printf '%s\n' "$now-$RANDOM" > "$CONFIG_DIR/.turn-ts-$key"
+[ "$1" = "Stop" ] && printf '%s\n' "$now-$RANDOM" > "$CONFIG_DIR/.turn-ts-$key"
 # Cache TTL of the session (5m or 1h) — Claude Code picks it per user (plan,
 # settings, env), and the statusline JSON carries no TTL breakdown. Read it from
-# the last main-thread cache write in the transcript: once per turn, off the
-# statusline hot path. No write found → keep the previous value.
-IFS= read -r -d '' _in
+# the last main-thread cache write in the transcript, after each API call
+# (PostToolUse, Stop): the TTL can drop from 1h to 5m mid-turn (overage). Off
+# the statusline hot path. No write found → keep the previous value.
+case "$1" in PostToolUse|Stop) ;; *) exit 0 ;; esac
+# Read only the head: transcript_path is a base field near the start, and
+# tool_response can be MBs (bash reads a pipe byte by byte: ~0.35 s/MB).
+IFS= read -r -d '' -n 8192 _in
 [[ "$_in" =~ \"transcript_path\":\ *\"([^\"]*)\" ]] || exit 0
 _tp="${BASH_REMATCH[1]}"
 [ -f "$_tp" ] || exit 0

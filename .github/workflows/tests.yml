@@ -30,6 +30,10 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q strace
+      - name: test (bash 5)
+        run: make test
+      - name: test (bash 3.2)
+        run: make test-bash32
       - name: perf (bash 5)
         run: make perf
       - name: perf (bash 3.2)
@@ -41,6 +45,10 @@ jobs:
       - uses: actions/checkout@v7
       # /bin/bash is the stock 3.2; `bash` in PATH can be Homebrew bash 5.
       # Covers the BSD date/stat paths and the Keychain branch.
+      - name: test (macOS /bin/bash)
+        env:
+          TEST_BASH: /bin/bash
+        run: make test
       - name: perf (macOS /bin/bash)
         env:
           PERF_BASH: /bin/bash

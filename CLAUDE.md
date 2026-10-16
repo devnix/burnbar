@@ -107,7 +107,7 @@ Claude Code runs the statusline command **for all active sessions**, not just th
 
 ### Timestamp Files (`~/.claude/.cache-ts-<session_prefix>`)
 
-- Written by hooks (`UserPromptSubmit`, `PostToolUse`) using `date +%s`
+- Written by hooks (`UserPromptSubmit`, `PostToolUse`, `Stop`) using `date +%s`
 - Key = first 8 chars of `session_id` (per-session isolation)
 - Hooks use `$CLAUDE_CODE_SESSION_ID` env var (no jq needed)
 - Statusline reads the same key via `${session_id:0:8}` from its JSON input
@@ -117,10 +117,12 @@ Claude Code runs the statusline command **for all active sessions**, not just th
 
 Claude Code picks the cache TTL per user: 1h for subscribers (behind an allowlist and a feature flag), 1h with `ENABLE_PROMPT_CACHING_1H` or a setting, else 5m. The statusline JSON has no TTL: `current_usage` carries only the four token totals, not the `cache_creation` breakdown (checked in the 2.1.301 binary).
 
-- Written by the `Stop` hook (once per turn, off the hot path). It reads `transcript_path` from the hook stdin with a bash regex, then takes the last `"isSidechain":false` entry in the last 256 KB of the transcript. `ephemeral_1h_input_tokens > 0` → `3600`, `ephemeral_5m_input_tokens > 0` → `300`, no write → keep the file. Take the last entry, never a sum: one session mixed 1h and 5m writes.
+- Written by the `PostToolUse` and `Stop` hooks (after each API call, off the hot path): the TTL can drop from 1h to 5m mid-turn (overage). It reads `transcript_path` from the first 8 KB of the hook stdin with a bash regex (`read -n 8192`: `tool_response` can be MBs, and bash reads a pipe byte by byte, ~0.35 s/MB measured), then takes the last `"isSidechain":false` entry in the last 256 KB of the transcript. `ephemeral_1h_input_tokens > 0` → `3600`, `ephemeral_5m_input_tokens > 0` → `300`, no write → keep the file. Take the last entry, never a sum: one session mixed 1h and 5m writes.
 - Statusline: `BURNBAR_CACHE_TTL`, else one `read` of the file (only `300`/`3600` are valid), else `300`.
 - Do not infer the TTL from the auth type or from `rate_limits`: the binary decides it through an allowlist, a feature flag and a "keep 5m" path, so the plan alone does not tell it.
-- The colors scale with the TTL (green > 40%, yellow > 20%). The notification stays at 50%: 30 min left on a 1h cache.
+- The colors scale with the TTL (green > 40%, yellow > 20%). The notification fires `BURNBAR_NOTIFY_LEAD` seconds before expiry (default 300), capped at 50% of the TTL: 5:00 on a 1h cache, 2:30 on a 5m cache.
+- Known error: if `Stop` fires before the last response is in the transcript, a text-only turn reads the previous response. Worst case: one turn of lag. `PostToolUse` runs after the tool result is written, so it reads the current response.
+- Tested by `tests/cache-ttl.sh` (`make test`, `make test-bash32`).
 - Not cleared on `SessionStart` (a resumed session keeps its TTL); stale files (>1 day) are cleaned with the others.
 
 ### Cache-Miss Cost (`{miss}`, alias `{next}`)
@@ -145,7 +147,7 @@ Alert priority: model first (if family changed), effort second (only if model fa
 
 - Key = first 8 chars of `session_id` (same as timestamp files)
 - Stores the cache timestamp (`$last`) for which the notification was already sent
-- Prevents repeated notifications: only fires once per cache period when `remaining` crosses 50% of `CACHE_TTL`
+- Prevents repeated notifications: only fires once per cache period when `remaining` crosses the lead time (`BURNBAR_NOTIFY_LEAD`, max 50% of `CACHE_TTL`)
 - Cleared on `SessionStart` alongside the timestamp file
 - Stale files (>1 day) cleaned on `SessionStart`
 
@@ -278,7 +280,7 @@ The script runs every 1 second. Minimize subprocess forks.
 
 **Bug**: Writing the sentinel file before sending the OSC/BEL sequence means a silent delivery failure (pty gone, permission error, swallowed by `2>/dev/null`) permanently suppresses the notification for the entire cache period — the sentinel is already set so subsequent ticks skip delivery.
 
-**Fix**: Set `_sent=1` inside each `case` arm only on successful `printf` (`&& _sent=1`), write the sentinel only if `_sent=1`. Include `none) _sent=1 ;;` as an explicit arm.
+**Fix**: Set `_sent=1` inside each `case` arm only on successful `printf` (`&& _sent=1`), write the sentinel only if `_sent=1`. `BURNBAR_NOTIFY=none` returns early, before the tty walk, and writes the sentinel there (`tests/cache-ttl.sh` uses it to observe the trigger without a tty).
 
 ### `has_cache=1` with an invalid timestamp
 

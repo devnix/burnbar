@@ -6,7 +6,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ## Features
 
-- **Cache TTL countdown** ⭐ — progress bar + `MM:SS` timer tracking the prompt cache window (5 minutes or 1 hour, detected per session), next to the cost of a cache miss. When half the time is gone, Burnbar fires a notification using Claude Code's own notification settings (terminal bell, iTerm2, Ghostty, Kitty — whatever you have configured). No more paying to re-warm a cache you didn't know had expired.
+- **Cache TTL countdown** ⭐ — progress bar + `MM:SS` timer tracking the prompt cache window (5 minutes or 1 hour, detected per session), next to the cost of a cache miss. When 5 minutes remain (2:30 on a 5-minute cache), Burnbar fires a notification using Claude Code's own notification settings (terminal bell, iTerm2, Ghostty, Kitty — whatever you have configured). No more paying to re-warm a cache you didn't know had expired.
 - **Context window progress bar** with color gradient (green → yellow → red)
 - **Partial block characters** (▏▎▍▌▋▊▉) for smooth, sub-cell precision
 - **Token count** showing current context size, color-matched to usage level
@@ -153,7 +153,7 @@ You can set variables inline in your `~/.claude/settings.json`:
 
 The prompt cache has a TTL of 5 minutes or 1 hour — after expiration, your next message reprocesses the entire conversation (higher latency, higher cost; `{miss}` shows how much). The `{cache}` tag shows a progress bar that drains over the TTL with a `MM:SS` countdown, so you can decide whether to keep going or start fresh.
 
-Claude Code picks the TTL per user (subscription, settings, `ENABLE_PROMPT_CACHING_1H`). Burnbar reads it from the session transcript at the end of each turn (the `Stop` hook): the last cache write tells 5m or 1h. Until the first turn ends, the timer assumes 5 minutes. To force a value, set `BURNBAR_CACHE_TTL` (seconds).
+Claude Code picks the TTL per user (subscription, settings, `ENABLE_PROMPT_CACHING_1H`). Burnbar reads it from the session transcript after each API call (the `PostToolUse` and `Stop` hooks): the last cache write tells 5m or 1h. Until the first cache write, the timer assumes 5 minutes. To force a value, set `BURNBAR_CACHE_TTL` (seconds).
 
 | Color | Remaining | Meaning |
 |-------|-----------|---------|
@@ -171,6 +171,14 @@ When the cache is created, Burnbar records the current model and effort level (p
 ### Per-workspace isolation
 
 Each workspace gets its own cache timer. On session start, the cache is cleared automatically so stale data from previous sessions never causes false alerts. Timestamp files live at `~/.claude/.cache-ts-<hash>` (or `$CLAUDE_CONFIG_DIR/.cache-ts-<hash>` for secondary profiles). Clean up with `rm ~/.claude/.cache-ts-*`.
+
+### `BURNBAR_NOTIFY_LEAD`
+
+Seconds before cache expiry when the notification fires. Default: `300`. Capped at half the TTL, so a 5-minute cache notifies at 2:30.
+
+```bash
+export BURNBAR_NOTIFY_LEAD=600
+```
 
 ### `BURNBAR_CACHE_WIDTH`
 

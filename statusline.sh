@@ -9,6 +9,7 @@
 #   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 20)
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8)
 #   BURNBAR_CACHE_TTL   — cache TTL in seconds (default: detected per session, 300 or 3600)
+#   BURNBAR_NOTIFY_LEAD — seconds before cache expiry to notify (default: 300, max TTL/2)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
 #   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
 #   BURNBAR_MONTHLY_BUDGET — monthly budget in the plan's currency, only used when the
@@ -254,8 +255,8 @@ FH_BAR_WIDTH="${BURNBAR_5H_WIDTH:-8}"
 UNFILLED_BG="47"
 
 cache_key="${session_id:0:8}"
-# Cache TTL: BURNBAR_CACHE_TTL, else the one the Stop hook read from the
-# transcript (300 or 3600), else 300 (the API default, until the first turn).
+# Cache TTL: BURNBAR_CACHE_TTL, else the one the hook read from the transcript
+# (300 or 3600), else 300 (the API default, until the first cache write).
 CACHE_TTL="${BURNBAR_CACHE_TTL:-}"
 case "$CACHE_TTL" in
   ''|0|*[!0-9]*)
@@ -351,21 +352,28 @@ _find_tty() {
   done
 }
 
-# ── Cache half-time notification ──────────────────────────────────────────────
-#   Fires once per cache period when remaining crosses 50%.
+# ── Cache expiry notification ─────────────────────────────────────────────────
+#   Fires once per cache period when remaining crosses the lead time:
+#   BURNBAR_NOTIFY_LEAD seconds (default 300), capped at 50% of the TTL
+#   (5m TTL → 2:30, 1h TTL → 5:00).
 #   BURNBAR_NOTIFY: auto|osc9|osc99|osc777|bell|none
 _maybe_notify() {
-  [ "$has_cache" = 1 ] && [ "$remaining" -gt 0 ] && [ "$remaining" -le $((CACHE_TTL / 2)) ] || return 0
+  local _lead="${BURNBAR_NOTIFY_LEAD:-300}"
+  case "$_lead" in ''|*[!0-9]*) _lead=300 ;; esac
+  [ "$_lead" -gt $((CACHE_TTL / 2)) ] && _lead=$((CACHE_TTL / 2))
+  [ "$has_cache" = 1 ] && [ "$remaining" -gt 0 ] && [ "$remaining" -le "$_lead" ] || return 0
   local _notif_file="$CONFIG_DIR/.cache-notif-$cache_key"
   if [ -f "$_notif_file" ]; then
     local _notif_ts; read -r _notif_ts < "$_notif_file" 2>/dev/null
     [ "$_notif_ts" = "$last" ] && return 0
   fi
+  # none: nothing to send, so skip the tty walk.
+  [ "${BURNBAR_NOTIFY:-auto}" = none ] && { printf '%s\n' "$last" > "$_notif_file"; return 0; }
   local _tty_dev=""
   _find_tty
   [ -n "$_tty_dev" ] || return 0
   local _notif_msg _nm _sent=0
-  printf -v _notif_msg 'Burnbar: cache 50%% — %d:%02d remaining' "$((remaining / 60))" "$((remaining % 60))"
+  printf -v _notif_msg 'Burnbar: cache expires in %d:%02d' "$((remaining / 60))" "$((remaining % 60))"
   _nm="${BURNBAR_NOTIFY:-auto}"
   if [ "$_nm" = "auto" ]; then
     local _pref
@@ -385,7 +393,6 @@ _maybe_notify() {
     osc99)  printf '\033]99;i=burnbar:d=0;%s\033\\' "$_notif_msg" > "$_tty_dev" 2>/dev/null && _sent=1 ;;
     osc777) printf '\033]777;notify;Burnbar;%s\a' "$_notif_msg" > "$_tty_dev" 2>/dev/null && _sent=1 ;;
     bell)   printf '\a' > "$_tty_dev" 2>/dev/null && _sent=1 ;;
-    none)   _sent=1 ;;
   esac
   [ "$_sent" = 1 ] && printf '%s\n' "$last" > "$_notif_file"
 }
