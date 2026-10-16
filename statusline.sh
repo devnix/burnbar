@@ -7,7 +7,7 @@
 #                         {sep}/{wrap} are responsive separators; [[ ... ]] wraps an
 #                         optional group that survives iff ≥1 {tag} inside it is non-empty.
 #   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 20)
-#   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8)
+#   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8, 0 = countdown only)
 #   BURNBAR_CACHE_TTL   — cache TTL in seconds (default: detected per session, 300 or 3600)
 #   BURNBAR_NOTIFY_LEAD — seconds before cache expiry to notify (default: 300, max TTL/2)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
@@ -251,6 +251,7 @@ _cwd="$cwd"
 # ── Cache timer: read timestamp before awk ────────────────────────────────────
 BAR_WIDTH="${BURNBAR_BAR_WIDTH:-20}"
 CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-8}"
+case "$CACHE_BAR_WIDTH" in *[!0-9]*) CACHE_BAR_WIDTH=8 ;; esac  # 0 hides the bar
 FH_BAR_WIDTH="${BURNBAR_5H_WIDTH:-8}"
 UNFILLED_BG="47"
 
@@ -631,17 +632,24 @@ if [ "$has_cache" = 1 ]; then
   fi
 
   printf -v countdown '%02d:%02d' $((remaining / 60)) $((remaining % 60))
+  # Expired: 00:00 flashes, white on red on even seconds. SGR 5 (blink) did not
+  # show in a test (Claude Code on Ghostty). Needs refreshInterval=1.
+  cache_cd_c="$cache_fg"
+  [ "$remaining" -eq 0 ] && [ $((_spend_now % 2)) -eq 0 ] && cache_cd_c="01;37;41"
 
-  _render_bar "$CACHE_BAR_WIDTH" "$cache_filled_full" "$cache_partial_idx" "$cache_fg" "$cache_bg" 0
-
-  if [ -n "$cache_alert" ]; then
-    _cache="${_bar_out} \033[${cache_fg}m${countdown}\033[0m \033[01;33m⚠ ${cache_alert}\033[0m"
-  else
-    _cache="${_bar_out} \033[${cache_fg}m${countdown}\033[0m"
+  # BURNBAR_CACHE_WIDTH=0: countdown only, no bar
+  if [ "$CACHE_BAR_WIDTH" -gt 0 ]; then
+    _render_bar "$CACHE_BAR_WIDTH" "$cache_filled_full" "$cache_partial_idx" "$cache_fg" "$cache_bg" 0
+    _cache="${_bar_out} "
   fi
+  _cache="${_cache}\033[${cache_cd_c}m${countdown}\033[0m"
+  [ -n "$cache_alert" ] && _cache="${_cache} \033[01;33m⚠ ${cache_alert}\033[0m"
 else
-  _render_bar "$CACHE_BAR_WIDTH" 0 0 "" "" 0
-  _cache="${_bar_out} \033[37m--:--\033[0m"
+  if [ "$CACHE_BAR_WIDTH" -gt 0 ]; then
+    _render_bar "$CACHE_BAR_WIDTH" 0 0 "" "" 0
+    _cache="${_bar_out} "
+  fi
+  _cache="${_cache}\033[37m--:--\033[0m"
 fi
 
 # ── Cost sparkline rendering ──────────────────────────────────────────────────
