@@ -18,6 +18,8 @@
 #
 # No network: a credentials file exists (so {monthly}/{daily} render from the
 # cache) but the plan cache is fresh, and curl/security are stubbed to fail.
+# The price cache (fresh prices are on by default) is fresh too: the hot-path
+# lookup runs, the download does not.
 #
 # Usage: tests/perf.sh
 # Env:   PERF_RUNS (default 30)  PERF_BUDGET_MS (60; 90 on bash < 4.2)
@@ -77,6 +79,12 @@ printf 'm1\n1.0000\n%s\n' "0.0100 0.0500 0.1200 0.0300 0.2500 0.0800 0.0150 0.31
 0.0400 0.0900 0.1700 0.0200 0.0600 0.2200 0.1100 0.0350" > "$CFG/.cost-hist-$KEY"  # no rewrite
 echo "92.37|400.00|USD|1|$(( NOW + 86400 ))|91.32|$TODAY|1.05" \
   > "$HOM/.cache/burnbar-plan-spend-cfg"                            # never stale → no fetch
+# Fresh price cache, the fixture model last (the lookup scans every line) at a
+# price unlike the table's, so the sanity check proves the hit path ran.
+{ echo "$NOW"
+  for _m in haiku-4-5 opus-4-5 sonnet-4-5 fable-5-1 opus-5 fable-5 opus-4-8 sonnet-5 \
+            opus-4-6 haiku-5-5 sonnet-4-6 sonnet-5-5 opus-4-7; do echo "claude-$_m 3 0 0"; done
+  echo "claude-opus-5-5 5 0 0"; } > "$HOM/.cache/burnbar-prices"
 
 cat > "$TMP/in.json" <<EOF
 {"cwd":"/home/user/dev/project","session_id":"$SID",
@@ -129,7 +137,7 @@ echo "Burnbar perf — $("$TEST_BASH" -c 'echo bash $BASH_VERSION'), $RUNS runs"
 
 # Sanity: the fixture renders every data tag (an empty tag would hide its cost).
 out=$(tick -- "$DEFAULT_FMT" 300 | sed 's/\x1b\[[0-9;]*m//g')
-for want in 'ctx:' 'miss:$0.7408' 'total:' 'cache:' 'delta:' '5h:' '1w:' 'mo:$92.37' 'day:$1.05'; do
+for want in 'ctx:' 'miss:$0.9260' 'total:' 'cache:' 'delta:' '5h:' '1w:' 'mo:$92.37' 'day:$1.05'; do
   [[ "$out" == *"$want"* ]] || { echo "  FAIL  fixture: '$want' missing from output"; fail=1; }
 done
 

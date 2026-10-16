@@ -103,7 +103,8 @@ Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format 
 5. If they want spend budgets (enables the bar in `{monthly}`/`{daily}`), prepend `BURNBAR_DAILY_BUDGET=N` (in the plan's currency). `BURNBAR_MONTHLY_BUDGET=N` only applies when the plan reports no limit of its own
 6. If they want to change the cost sparkline, prepend `BURNBAR_SPARK=auto|braille|octant|blocks|none` (rendering mode) or `BURNBAR_SPARK_WIDTH=N` (width in cells, default 8; braille/octant fit 2 turns per cell)
 7. If they want the cache notification earlier or later, prepend `BURNBAR_NOTIFY_LEAD=N` (seconds before expiry, default 300, capped at half the TTL)
-8. Tell the user to restart Claude Code
+8. If they want no request to models.dev, prepend `BURNBAR_FRESH_PRICES=0` (default `1`: the `{miss}` prices refresh daily from models.dev in the background; the built-in table stays the fallback)
+9. Tell the user to restart Claude Code
 
 **CRITICAL: the format string must be single-quoted in the command to prevent shell expansion.**
 

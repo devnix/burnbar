@@ -261,6 +261,18 @@ Base input prices (per 1M tokens, Anthropic API, 2026-10):
 
 An unlisted version of a known family uses the newest price of that family. Not included: fast mode, Batch and Bedrock / Vertex prices.
 
+### `BURNBAR_FRESH_PRICES`
+
+By default, Burnbar refreshes the prices of `{miss}` once a day from [models.dev](https://models.dev) (Anthropic models only). A new model then gets its price before a Burnbar update. Set `0` to use only the table above, with no request to models.dev.
+
+```bash
+export BURNBAR_FRESH_PRICES=0
+```
+
+- The download (~0.5 MB compressed) runs in the background, only when the format contains `{miss}`. The statusline never waits for it.
+- A model that is not in the download, a download older than 7 days, or a failed download uses the table above. After a failure, the next attempt waits 6 hours.
+- The cache is `~/.cache/burnbar-prices`.
+
 ## Uninstall
 
 In Claude Code, run:
