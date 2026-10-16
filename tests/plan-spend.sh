@@ -73,18 +73,21 @@ wait_calls() {  # $1 = expected curl calls
 }
 
 # ── Display ───────────────────────────────────────────────────────────────────
+# A fresh lock holds back the refresh: a job still running after the next
+# reset (slow runners) would log its curl call into the backoff counts.
 reset; cache_at 60
 check "fresh reading → plain"          'mo:$98.33 day:$3.10'   "$(amounts)"
 check "fresh reading → no refresh"     0                       "$(calls)"
-reset; cache_at 600
+reset; cache_at 600; echo 1 > "$LOCK"
 check "10 min → plain"                 'mo:$98.33 day:$3.10'   "$(amounts CURL_BODY=)"
-reset; cache_at 1000
+reset; cache_at 1000; echo 1 > "$LOCK"
 check "over 15 min → stale marker"     'mo:~$98.33 day:~$3.10' "$(amounts CURL_BODY=)"
-reset; cache_at 86400 2000-01-01
+reset; cache_at 86400 2000-01-01; echo 1 > "$LOCK"
 check "1 day old → still shown"        'mo:~$98.33 day:~$0.00' "$(amounts CURL_BODY=)"
-reset; cache_at 1000
+reset; cache_at 1000; echo 1 > "$LOCK"
 check "stale with budget bars"         'mo:~$98.33/$400 day:~$3.10/$20' \
   "$(render CURL_BODY= BURNBAR_DAILY_BUDGET=20 | grep -o '[a-z]*:~\{0,1\}\$[0-9.]*/\$[0-9]*' | tr '\n' ' ' | sed 's/ $//')"
+check "held lock → no refresh"         0                       "$(calls)"
 
 # ── Backoff ───────────────────────────────────────────────────────────────────
 reset; cache_at 1000
