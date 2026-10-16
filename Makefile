@@ -20,9 +20,10 @@ ci: lint perf perf-bash32
 
 lint: shellcheck actionlint manifests
 
-# -S error: the warnings today are SC2154 false positives from eval-assigned vars.
+# -S warning: vars assigned by eval or printf -v are declared or carry a
+# per-line disable, so a new warning is a real one.
 shellcheck:
-	docker run --rm -v "$$PWD":/mnt:ro $(SHELLCHECK_IMAGE) -S error $(SH_FILES)
+	docker run --rm -v "$$PWD":/mnt:ro $(SHELLCHECK_IMAGE) -S warning $(SH_FILES)
 
 actionlint:
 	docker run --rm -v "$$PWD":/repo:ro -w /repo $(ACTIONLINT_IMAGE) -no-color

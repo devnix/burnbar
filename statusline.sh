@@ -162,6 +162,7 @@ _spawn_refresh() {  # $1 = refresh function, $2 = lock file
     # lock: that would turn a failing refresh into one request per tick.
     _lock_mtime=$(stat -c %Y "$2" 2>/dev/null || stat -f %m "$2" 2>/dev/null)
     case "$_lock_mtime" in ''|*[!0-9]*) return ;; esac
+    # shellcheck disable=SC2154  # _epoch assigns it (printf -v)
     [ "$(( _spend_now - _lock_mtime ))" -lt 300 ] && return
   fi
   # No lock, no spawn: without it nothing stops a new job every tick. macOS
@@ -172,12 +173,12 @@ _spawn_refresh() {  # $1 = refresh function, $2 = lock file
 }
 
 _epoch _spend_now
-plan_used="" plan_limit="" plan_cur="" plan_on=0 _plan_epoch=0 plan_base="" plan_day="" plan_daily=""
+plan_used="" plan_limit="" plan_cur="" _plan_epoch=0 plan_day="" plan_daily=""
 # No credentials (API-key auth) → never fetch. macOS keeps them in the Keychain.
 if [[ "$_fmt" == *'{monthly}'* || "$_fmt" == *'{daily}'* ]] \
    && { [[ "$OSTYPE" == darwin* ]] || [ -f "$CONFIG_DIR/.credentials.json" ]; }; then
-  [ -f "${PLAN_CACHE}" ] && IFS='|' read -r plan_used plan_limit plan_cur plan_on _plan_epoch \
-    plan_base plan_day plan_daily < "${PLAN_CACHE}"
+  [ -f "${PLAN_CACHE}" ] && IFS='|' read -r plan_used plan_limit plan_cur _ _plan_epoch \
+    _ plan_day plan_daily < "${PLAN_CACHE}"
   case "$_plan_epoch" in ''|*[!0-9]*) _plan_epoch=0 ;; esac
   [ "$(( _spend_now - _plan_epoch ))" -gt "$PLAN_TTL" ] && _spawn_refresh _update_plan_spend "$PLAN_LOCK"
 fi
@@ -190,6 +191,7 @@ if [ -n "$plan_used" ] && [ "$(( _spend_now - _plan_epoch ))" -le "$PLAN_MAX_AGE
   [ "$plan_limit" != "0.00" ] && monthly_budget="${plan_limit%.00}"
   _strftime _today '%Y-%m-%d' "$_spend_now"
   # Past midnight but not refreshed yet → nothing spent today so far.
+  # shellcheck disable=SC2154  # _strftime assigns it (printf -v)
   if [ "$plan_day" = "$_today" ] && [ -n "$plan_daily" ]; then daily_amt="$plan_daily"; else daily_amt="0.00"; fi
   case "$plan_cur" in
     USD) spend_sym='$' ;; EUR) spend_sym='€' ;; GBP) spend_sym='£' ;;
@@ -199,6 +201,8 @@ fi
 
 # ── Parse input (single jq call) ─────────────────────────────────────────────
 input=$(cat)
+# The eval below assigns these; ShellCheck sees no other assignment (SC2154).
+declare cwd model_id used_pct input_toks cw_toks cr_toks total_cost_raw
 jq_out=$(jq -r '
   "cwd=" + ((.cwd // "") | @sh),
   "_model=" + ((.model.display_name // "") | @sh),
@@ -685,6 +689,7 @@ if [ -n "$fh_pct" ]; then
   _5h="${_bar_out} \033[${_fh_fg}m${_fhp:-0}%\033[0m"
   if [ -n "$fh_reset" ] && [ "${fh_reset%%.*}" -gt 0 ] 2>/dev/null; then
     _strftime _fh_clock '%H:%M' "${fh_reset%%.*}"
+    # shellcheck disable=SC2154  # _strftime assigns it (printf -v)
     _5h="${_5h} ↺\033[${_fh_fg}m${_fh_clock}\033[0m"
   fi
 fi
@@ -706,6 +711,7 @@ if [ -n "$sd_pct" ]; then
     _1w="${_1w} \033[${_sd_fg}m${_sd_countdown}\033[0m"
     if [ "$_sd_secs" -lt 86400 ]; then
       _strftime _sd_clock '%H:%M' "${sd_reset%%.*}"
+      # shellcheck disable=SC2154  # _strftime assigns it (printf -v)
       _1w="${_1w} ↺\033[${_sd_fg}m${_sd_clock}\033[0m"
     fi
   fi
