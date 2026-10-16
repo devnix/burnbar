@@ -91,7 +91,7 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{next}` | Former name of `{miss}` (an alias) |
 | `{total}` | Cumulative session cost |
 | `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline)) |
-| `{delta}` | Last turn's cost delta (e.g., "delta:$0.0312") |
+| `{delta}` | Cost of the current turn, live; between turns, of the last turn (e.g., "delta:$0.0312") |
 | `{cache}` | Cache TTL progress bar + `MM:SS` countdown |
 | `{monthly}` | Billed spend of the billing period (Enterprise usage, extra-usage credits) from the claude.ai plan-usage endpoint, with the plan's limit as bar + `%`. `BURNBAR_MONTHLY_BUDGET` only applies when the plan has no limit |
 | `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar + `%` when `BURNBAR_DAILY_BUDGET` is set |
@@ -200,7 +200,9 @@ Each turn's cost (the delta of `cost.total_cost_usd` between responses) is scale
 
 The sparkline always renders at its full configured width — unused cells show the same grey background as the unfilled bar sections, so the layout stays stable as turns accumulate.
 
-The first data point appears after Claude's second response (one full turn must complete to measure its cost). The `{delta}` tag shows the numeric value of the most recent turn's cost.
+The current turn is live: while Claude works, its cost so far is drawn as the last column and grows with each API call. When the turn ends, the recorded cost replaces it in the same slot. If the live turn becomes the most expensive one in the window, the older bars shrink to keep the scale.
+
+The `{delta}` tag shows the cost of the current turn while it runs, and the cost of the most recent turn between turns.
 
 ### `BURNBAR_SPARK`
 

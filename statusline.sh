@@ -460,18 +460,26 @@ read -r used_pct_int filled_full partial_idx ctx_fmt miss_cost total_cost \
       if (cpi > 7) cpi = 7; if (cpi < 0) cpi = 0
     } else { cff = 0; cpi = 0 }
 
-    # Sparkline: append this turn delta, render last smaxn turns quantized to
+    # Sparkline: append this turn delta, render last smaxn columns quantized to
     # the mode-native lmax levels (8 for blocks, 4 per column for braille/octant)
     if (srec) {
       d = traw - sb; if (d < 0) d = 0
       shist = (shist == "") ? sprintf("%.4f", d) : shist " " sprintf("%.4f", d)
     }
     n = split(shist, sh, " ")
-    si = (n > smaxn) ? n - smaxn + 1 : 1
+    # Turn in progress: the cost since the last boundary is the value the next
+    # Stop records. Rendered as the last column (it grows in place and the
+    # recorded delta replaces it in the same slot), never persisted (snew uses n).
+    rn = n
+    if (!srec && sb != "") {
+      live = traw - sb
+      if (live >= 0.00005) sh[++rn] = live
+    }
+    si = (rn > smaxn) ? rn - smaxn + 1 : 1
     smax = 0
-    for (i = si; i <= n; i++) if (sh[i] + 0 > smax) smax = sh[i] + 0
+    for (i = si; i <= rn; i++) if (sh[i] + 0 > smax) smax = sh[i] + 0
     slv = ""
-    for (i = si; i <= n; i++) {
+    for (i = si; i <= rn; i++) {
       if (sh[i] + 0 <= 0) l = 0
       else {
         l = int(sh[i] / smax * lmax + 0.5)
@@ -487,7 +495,7 @@ read -r used_pct_int filled_full partial_idx ctx_fmt miss_cost total_cost \
       ki = (n > skeep) ? n - skeep + 1 : 1
       for (i = ki; i <= n; i++) snew = (snew == "") ? sh[i] : snew " " sh[i]
     }
-    ld = (n > 0) ? sprintf("%.4f", sh[n] + 0) : "0.0000"
+    ld = (rn > 0) ? sprintf("%.4f", sh[rn] + 0) : "0.0000"
 
     spct = (sbudget > 0) ? sraw / sbudget * 100 : 0
     mf = spct / 100 * mbw
@@ -637,8 +645,9 @@ else
 fi
 
 # ── Cost sparkline rendering ──────────────────────────────────────────────────
-#   Per-turn cost deltas as a sparkline. 2 turns per cell (braille/octant),
-#   1 turn per cell (blocks). awk already trimmed the levels to the window.
+#   Per-turn cost deltas as a sparkline, the last column can be the live turn.
+#   2 turns per cell (braille/octant), 1 turn per cell (blocks). awk already
+#   trimmed the levels to the window.
 _spark=""
 if [ "$SPARK_MODE" != "none" ]; then
   _s="" _spark_cells=0 _lv="$spark_levels"
