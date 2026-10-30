@@ -141,7 +141,7 @@ Claude Code picks the cache TTL per user: 1h for subscribers (behind an allowlis
 - Do not infer the TTL from the auth type or from `rate_limits`: the binary decides it through an allowlist, a feature flag and a "keep 5m" path, so the plan alone does not tell it.
 - The colors scale with the TTL (green > 40%, yellow > 20%). The notification fires `BURNBAR_NOTIFY_LEAD` seconds before expiry (default 300), capped at 50% of the TTL: 5:00 on a 1h cache, 2:30 on a 5m cache.
 - Expired (`00:00`): the countdown flashes, white on red when the epoch second is even. The statusline runs once per second (`refreshInterval: 1`), so the color alternates with zero forks. SGR 5 (blink) did not show in a test on Claude Code with Ghostty.
-- `BURNBAR_CACHE_WIDTH=0` hides the bar: no `_render_bar` call and no leading space. A non-numeric width falls back to 8.
+- `BURNBAR_CACHE_WIDTH=0` hides the bar and its space, as in all the bar widths (see **Bar Widths**).
 - `PreToolUse` and `Stop` fire before Claude Code writes the response to the transcript (measured: absent at +0 s, present at +0.2 s). The hook reparses every 0.1 s, up to 1 s, until the last main-thread user/assistant entry is an `assistant` entry; then it uses what is there. `PostToolUse` runs after the tool result is written, so it reads the response at once. The wait uses `sleep 0.1`: BSD, GNU and busybox `sleep` take fractions (macOS is checked only in CI).
 - Tested by `tests/cache-ttl.sh` (`make test`, `make test-bash32`).
 - Not cleared on `SessionStart` (a resumed session keeps its TTL); stale files (>1 day) are cleaned with the others.
@@ -246,11 +246,11 @@ Robustness invariants:
 - **Keep cap**: the persisted delta list keeps `max(32, render_window)` turns, never just the render window — switching to a narrower mode/width must not destroy history.
 - **Persist guard**: when a delta was recorded (`spark_record=1`), the file is only rewritten if awk actually produced a history (`spark_newhist` non-empty) — a failed awk/jq on a boundary tick must not wipe the history (same bug class as the notification sentinel).
 - **Baseline validation**: a corrupt/empty baseline line is treated as re-init (baseline rewritten, no delta recorded) — otherwise the next delta would swallow the entire session cost.
-- **`BURNBAR_SPARK_WIDTH` validation**: empty/zero/non-numeric falls back to 8.
+- **`BURNBAR_SPARK_WIDTH` validation**: empty/non-numeric falls back to 8. `0` hides the sparkline and keeps the tracking: `{delta}` reads the history, not the render window. `BURNBAR_SPARK=none` stops the tracking, so `{delta}` stays at `$0.0000`.
 
 ### Rendering
 
-The sparkline always renders at `SPARK_WIDTH` cells — unused cells are padded with `UNFILLED_BG` (grey, same as other bars). Data characters use cyan foreground on the same grey background. This keeps the layout stable regardless of how many turns have been recorded.
+The sparkline always renders at `SPARK_WIDTH` cells (`0`: empty tag) — unused cells are padded with `UNFILLED_BG` (grey, same as other bars). Data characters use cyan foreground on the same grey background. This keeps the layout stable regardless of how many turns have been recorded.
 
 **Live turn**: on a tick with no new marker and a valid baseline, `live = total - baseline` is the value the next `Stop` records. When it is ≥ $0.00005, awk appends it to the render array only (`rn = n + 1`; `snew` stops at `n`, so it is never persisted and no file is written on a live tick). It takes part in the window max, so the older bars shrink when it becomes the max. At `Stop`, the recorded delta takes the same index: the braille/octant pairing does not shift. Cost that arrives between turns (after `Stop`) shows as live and goes into the next delta, as before. No separate color: in braille/octant the live column shares its cell with the previous turn. `tests/live-delta.sh` covers it.
 
@@ -289,6 +289,15 @@ Both tags come from `GET https://api.anthropic.com/api/oauth/usage` — the undo
 - **Display**: a reading older than `PLAN_STALE_AGE` (15 min, 2 missed refreshes) is still shown, with a `~` before the amounts (`mo:~$98.33/$400`). It is never hidden: during a long 429, the last reading is better than nothing. The plan limit is the monthly budget; `BURNBAR_MONTHLY_BUDGET` only applies when the plan has none. Currency symbol from the response (USD `$`, EUR `€`, GBP `£`, else the ISO code), shared by both tags.
 - Observed shapes (2026-10): Enterprise → `five_hour`/`seven_day` `null`, `spend` in USD with the org's monthly limit. Pro → windows present, `spend.enabled=false` (`out_of_credits`), shown as `€0.00/€50`. `extra_usage.daily`/`.weekly` exist but were `null` on both.
 - Tested by `tests/plan-spend.sh` (stub `curl`; never call the real endpoint in a loop: each call uses the quota and makes a 429 last longer).
+
+## Bar Widths
+
+`BURNBAR_BAR_WIDTH`, `_CACHE_WIDTH`, `_5H_WIDTH`, `_WEEKLY_WIDTH`, `_MONTHLY_WIDTH`, `_DAILY_WIDTH` and `_SPARK_WIDTH`: `0` hides the bar and keeps the rest of the tag. A non-numeric value falls back to the default (a value that reaches `_render_bar` gives `[: x: integer expression expected` and no bar).
+
+- A space inside a tag value goes with the bar: `_render_bar` gives an empty `_bar_out` at width 0, and the callers append `${_bar_out:+$_bar_out }`.
+- A space in the format string cannot do that (`{ctx} {bar} {pct}`, `{delta} {spark}{sep}`), so the tag scan drops the spaces before any empty tag. This applies to every empty tag, not only a hidden bar. A tag at the line start keeps the space after it: `{bar} {pct}` gives ` 47%`.
+- `{bar}` and `{spark}` are empty at width 0, so a `[[ ]]` group with only one of them disappears.
+- Tested by `tests/bars.sh`.
 
 ## Performance
 

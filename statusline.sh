@@ -6,18 +6,23 @@
 #   BURNBAR_FORMAT      — format string with {tag} placeholders (see README for tags).
 #                         {sep}/{wrap} are responsive separators; [[ ... ]] wraps an
 #                         optional group that survives iff ≥1 {tag} inside it is non-empty.
+#                         An empty {tag} takes the spaces before it.
+#   Bar widths: 0 hides the bar and keeps the rest of the tag. A non-numeric width
+#   falls back to the default.
 #   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 20)
-#   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8, 0 = countdown only)
+#   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8)
 #   BURNBAR_NOTIFY_LEAD — seconds before cache expiry to notify (default: 300, max TTL/2)
 #   BURNBAR_FRESH_PRICES — 0 = the built-in {miss} price table only, no download
 #                          (default: 1, refresh the prices daily from models.dev)
 #   BURNBAR_SPARK       — cost sparkline mode: auto|braille|octant|blocks|none
-#   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8)
+#   BURNBAR_SPARK_WIDTH — sparkline width in cells (default: 8; 0 keeps {delta} tracking)
 #   BURNBAR_MONTHLY_BUDGET — monthly budget in the plan's currency, only used when the
 #                            plan reports no limit of its own (0 = no bar)
 #   BURNBAR_DAILY_BUDGET   — daily budget in the plan's currency (0 = show spend only, no bar)
 #   BURNBAR_WEEKLY_WIDTH   — width of the 7-day (1w) plan-usage meter bar in cells (default: 8)
 #   BURNBAR_5H_WIDTH    — width of the 5h plan-usage meter bar in cells (default: 8)
+#   BURNBAR_MONTHLY_WIDTH  — width of the {monthly} bar in cells (default: 8)
+#   BURNBAR_DAILY_WIDTH    — width of the {daily} bar in cells (default: 8)
 #   BURNBAR_WRAP_SEP    — separator used at {wrap} when line fits (default: " ")
 #   BURNBAR_COLS        — override terminal width for wrap decisions (default: auto via stty)
 #   BURNBAR_SEP         — group separator character used at {sep} (default: "│")
@@ -78,9 +83,12 @@ _fmt="${BURNBAR_FORMAT:-$_default_fmt}"
 #   the last reading taken before today's midnight. Only fetched when the format
 #   contains {monthly} or {daily}. The 5h / 1w meters come from the JSON
 #   rate_limits fields instead.
-MONTHLY_BAR_WIDTH=8
-DAILY_BAR_WIDTH=8
+MONTHLY_BAR_WIDTH="${BURNBAR_MONTHLY_WIDTH:-8}"
+case "$MONTHLY_BAR_WIDTH" in *[!0-9]*) MONTHLY_BAR_WIDTH=8 ;; esac
+DAILY_BAR_WIDTH="${BURNBAR_DAILY_WIDTH:-8}"
+case "$DAILY_BAR_WIDTH" in *[!0-9]*) DAILY_BAR_WIDTH=8 ;; esac
 WEEKLY_BAR_WIDTH="${BURNBAR_WEEKLY_WIDTH:-8}"
+case "$WEEKLY_BAR_WIDTH" in *[!0-9]*) WEEKLY_BAR_WIDTH=8 ;; esac
 PLAN_TTL=300
 PLAN_STALE_AGE=900       # an older reading is shown with a "~": 2 refreshes missed
 PLAN_MAX_BACKOFF=3600    # failed refreshes: the wait doubles from 5 min up to this
@@ -395,9 +403,11 @@ _read_branch() {
 
 # ── Cache timer: read timestamp before awk ────────────────────────────────────
 BAR_WIDTH="${BURNBAR_BAR_WIDTH:-20}"
+case "$BAR_WIDTH" in *[!0-9]*) BAR_WIDTH=20 ;; esac  # 0 hides the bar, as in all the widths
 CACHE_BAR_WIDTH="${BURNBAR_CACHE_WIDTH:-8}"
-case "$CACHE_BAR_WIDTH" in *[!0-9]*) CACHE_BAR_WIDTH=8 ;; esac  # 0 hides the bar
+case "$CACHE_BAR_WIDTH" in *[!0-9]*) CACHE_BAR_WIDTH=8 ;; esac
 FH_BAR_WIDTH="${BURNBAR_5H_WIDTH:-8}"
+case "$FH_BAR_WIDTH" in *[!0-9]*) FH_BAR_WIDTH=8 ;; esac
 UNFILLED_BG="47"
 
 cache_key="${session_id:0:8}"
@@ -438,7 +448,7 @@ esac
 #   .cost-hist-<key> — 3 lines: marker, cost baseline, space-separated deltas
 SPARK_MODE="${BURNBAR_SPARK:-auto}"
 SPARK_WIDTH="${BURNBAR_SPARK_WIDTH:-8}"
-case "$SPARK_WIDTH" in ''|0|*[!0-9]*) SPARK_WIDTH=8 ;; esac
+case "$SPARK_WIDTH" in *[!0-9]*) SPARK_WIDTH=8 ;; esac  # 0: no cells, {delta} still tracks
 if [ "$SPARK_MODE" = "auto" ]; then
   # Octants (Unicode 16) render natively in Ghostty and Kitty; braille elsewhere
   case "$TERM_FAMILY" in
@@ -696,7 +706,9 @@ else
   level_bold="01;32"
 fi
 
-# ── Bar rendering (shared by context and cache bars, zero forks) ──────────────
+# ── Bar rendering (shared by all the bars, zero forks) ────────────────────────
+#   Width 0 → empty _bar_out. Callers append "${_bar_out:+$_bar_out }" so that the
+#   space goes with the bar.
 _partials=(" " "▏" "▎" "▍" "▌" "▋" "▊" "▉")
 _render_bar() {
   local _w=$1 _filled=$2 _partial=$3 _fg=$4 _bg=$5 _threshold=$6
@@ -807,19 +819,12 @@ if [ "$has_cache" = 1 ]; then
   cache_cd_c="$cache_fg"
   [ "$remaining" -eq 0 ] && [ $((_spend_now % 2)) -eq 0 ] && cache_cd_c="01;37;41"
 
-  # BURNBAR_CACHE_WIDTH=0: countdown only, no bar
-  if [ "$CACHE_BAR_WIDTH" -gt 0 ]; then
-    _render_bar "$CACHE_BAR_WIDTH" "$cache_filled_full" "$cache_partial_idx" "$cache_fg" "$cache_bg" 0
-    _cache="${_bar_out} "
-  fi
-  _cache="${_cache}\033[${cache_cd_c}m${countdown}\033[0m"
+  _render_bar "$CACHE_BAR_WIDTH" "$cache_filled_full" "$cache_partial_idx" "$cache_fg" "$cache_bg" 0
+  _cache="${_bar_out:+$_bar_out }\033[${cache_cd_c}m${countdown}\033[0m"
   [ -n "$cache_alert" ] && _cache="${_cache} \033[01;33m⚠ ${cache_alert}\033[0m"
 else
-  if [ "$CACHE_BAR_WIDTH" -gt 0 ]; then
-    _render_bar "$CACHE_BAR_WIDTH" 0 0 "" "" 0
-    _cache="${_bar_out} "
-  fi
-  _cache="${_cache}\033[37m--:--\033[0m"
+  _render_bar "$CACHE_BAR_WIDTH" 0 0 "" "" 0
+  _cache="${_bar_out:+$_bar_out }\033[37m--:--\033[0m"
 fi
 
 # ── Cost sparkline rendering ──────────────────────────────────────────────────
@@ -873,7 +878,7 @@ if [ -n "$monthly_amt" ]; then
   else _mbg=42; _mfg=32; fi
   if [ "${monthly_budget:-0}" != "0" ]; then
     _render_bar "$MONTHLY_BAR_WIDTH" "$monthly_filled" "$monthly_partial" "$_mfg" "$_mbg" 0
-    _monthly="mo:\033[${_mfg}m${spend_stale}${spend_sym}${monthly_amt}/${spend_sym}${monthly_budget}\033[0m ${_bar_out} \033[${_mfg}m${spend_pct}%\033[0m"
+    _monthly="mo:\033[${_mfg}m${spend_stale}${spend_sym}${monthly_amt}/${spend_sym}${monthly_budget}\033[0m ${_bar_out:+$_bar_out }\033[${_mfg}m${spend_pct}%\033[0m"
   else
     _monthly="mo:\033[01;36m${spend_stale}${spend_sym}${monthly_amt}\033[0m"
   fi
@@ -885,7 +890,7 @@ if [ -n "$daily_amt" ]; then
   else _dbg=42; _dfg=32; fi
   if [ "${BURNBAR_DAILY_BUDGET:-0}" != "0" ]; then
     _render_bar "$DAILY_BAR_WIDTH" "$daily_filled" "$daily_partial" "$_dfg" "$_dbg" 0
-    _daily="day:\033[${_dfg}m${spend_stale}${spend_sym}${daily_amt}/${spend_sym}${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out} \033[${_dfg}m${daily_pct}%\033[0m"
+    _daily="day:\033[${_dfg}m${spend_stale}${spend_sym}${daily_amt}/${spend_sym}${BURNBAR_DAILY_BUDGET}\033[0m ${_bar_out:+$_bar_out }\033[${_dfg}m${daily_pct}%\033[0m"
   else
     _daily="day:\033[01;36m${spend_stale}${spend_sym}${daily_amt}\033[0m"
   fi
@@ -904,7 +909,7 @@ if [ -n "$fh_pct" ]; then
   elif [ "${_fhp:-0}" -ge 70 ] 2>/dev/null; then _fh_bg=43; _fh_fg=33
   else _fh_bg=42; _fh_fg=32; fi
   _render_bar "$FH_BAR_WIDTH" "$fh_filled" "$fh_partial" "$_fh_fg" "$_fh_bg" 0
-  _5h="${_bar_out} \033[${_fh_fg}m${_fhp:-0}%\033[0m"
+  _5h="${_bar_out:+$_bar_out }\033[${_fh_fg}m${_fhp:-0}%\033[0m"
   if [ -n "$fh_reset" ] && [ "${fh_reset%%.*}" -gt 0 ] 2>/dev/null; then
     _strftime _fh_clock '%H:%M' "${fh_reset%%.*}"
     # shellcheck disable=SC2154  # _strftime assigns it (printf -v)
@@ -917,7 +922,7 @@ if [ -n "$sd_pct" ]; then
   elif [ "${_sdp:-0}" -ge 70 ] 2>/dev/null; then _sd_bg=43; _sd_fg=33
   else _sd_bg=42; _sd_fg=32; fi
   _render_bar "$WEEKLY_BAR_WIDTH" "$sd_filled" "$sd_partial" "$_sd_fg" "$_sd_bg" 0
-  _1w="${_bar_out} \033[${_sd_fg}m${_sdp:-0}%\033[0m"
+  _1w="${_bar_out:+$_bar_out }\033[${_sd_fg}m${_sdp:-0}%\033[0m"
   if [ -n "$sd_reset" ] && [ "${sd_reset%%.*}" -gt 0 ] 2>/dev/null; then
     _sd_secs=$(( ${sd_reset%%.*} - _now )); [ "$_sd_secs" -lt 0 ] && _sd_secs=0
     # The 7-day window can span days; fall back to H:MM under 24h.
@@ -983,6 +988,8 @@ done
 #   quadratic in the line length, and 16 of them over the growing line cost
 #   ×60 for 4x segments. The whitelist keeps {out}, {i}... from leaking
 #   internal variables. {sep}, {wrap}, unknown tags and a lone { stay literal.
+#   An empty value takes the spaces before it: "{ctx} {bar} {pct}" without a bar
+#   keeps one space, and "{delta} {spark}{sep}" leaves none before the separator.
 _res="" _rest="$_out"
 while [[ "$_rest" == *'{'* ]]; do
   _res+="${_rest%%\{*}"; _rest="${_rest#*\{}"
@@ -990,7 +997,12 @@ while [[ "$_rest" == *'{'* ]]; do
   case "$_tag" in
     user|host|cwd|branch|model|bar|pct|ctx|miss|next|total|spark|cache|delta|monthly|daily|5h|1w)
       if [ "$_tag" != "$_rest" ]; then  # a closing } exists
-        _vn="_$_tag"; _res+="${!_vn}"; _rest="${_rest#*\}}"
+        _vn="_$_tag"; _rest="${_rest#*\}}"
+        if [ -n "${!_vn}" ]; then
+          _res+="${!_vn}"
+        else
+          while [[ "$_res" == *' ' ]]; do _res="${_res% }"; done
+        fi
         continue
       fi ;;
   esac
