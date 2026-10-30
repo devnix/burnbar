@@ -26,14 +26,26 @@ The plugin version is hardcoded in `.claude-plugin/plugin.json` and `.claude-plu
 4. `git push && git push --tags`
 5. **Publish a GitHub Release — mandatory, not optional.** Every tag MUST have a
    matching Release; a tag without one leaves the public "Latest" stale and
-   misleads users. Run `gh release create <version> --title "<version>"
-   --generate-notes --latest`. (Use `--latest=false` only when backfilling an
-   older version.) Never push a tag without creating its Release in the same
-   session.
+   misleads users. Write the notes (see **Release Notes**), then run `gh release
+   create <version> --title "<version>" --notes-file <file> --latest`. (Use
+   `--latest=false` only when backfilling an older version.) Never push a tag
+   without creating its Release in the same session.
 
 When editing the manifests, change only the `version` line — do not let `jq`
 rewrite the file, as it reformats inline arrays (e.g. `keywords`). Edit the line
 in place.
+
+### Release Notes
+
+The reader is a user who upgrades from the previous release. `--generate-notes` alone gives a list of PR titles (or only a compare link), so write the notes by hand.
+
+- **Compare the two releases, not the commits.** Read `git log <prev>..HEAD`, then check the facts against `git show <prev>:<file>`. Report the net change: work that was added and removed between the releases does not exist for this reader. Example: `BURNBAR_CACHE_TTL` never shipped, so its removal is not in the 0.3.0 notes, although its commit is `fix!:`.
+- **Sections, in this order; omit an empty one:** `Upgrade notes`, `Added`, `Changed`, `Fixed`.
+- **`Upgrade notes` come first.** Put here what the reader must do or will notice without asking: a removed tag or variable, a changed default and how to keep the old one, a restart. Always list a new network request or a new use of credentials: what is sent, where, how often, and how to turn it off.
+- **One bullet = one effect the user can see.** Name the tag or variable, and link the PR when there is one. Do not name internal functions or files, and do not paste commit subjects.
+- **Leave out** CI, tests, internal docs and refactors. Include performance only with a measured number and only when the user can notice it.
+- **Credit** external contributors by name. Do not write a bare `@name` unless it is their real login.
+- **End with** `**Full Changelog**: https://github.com/devnix/burnbar/compare/<prev>...<version>`.
 
 ## Hook Output
 
