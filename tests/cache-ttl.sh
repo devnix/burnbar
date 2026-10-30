@@ -121,10 +121,23 @@ tick() {  # FMT = format (default {cache}); extra args are env assignments
     ${LEAD:+BURNBAR_NOTIFY_LEAD=$LEAD} ${CW:+BURNBAR_CACHE_WIDTH=$CW} "$@" \
     "$TEST_BASH" "$REPO/statusline.sh" < "$TMP/in.json"
 }
-countdown() {  # 30 s after the last API call; fresh epoch so a second boundary cannot shift it
+# An exact countdown needs the timestamp and the tick in one second: runs "$@"
+# again when the second changed meanwhile (a cold tick in Docker takes longer).
+same_second() {
+  local i=0 s out
+  while [ "$i" -lt 5 ]; do
+    s=$(date +%s)
+    out=$("$@")
+    [ "$(date +%s)" = "$s" ] && break
+    i=$((i + 1))
+  done
+  echo "$out"
+}
+countdown_once() {  # 30 s after the last API call
   echo "$(( $(date +%s) - 30 ))" > "$TS"
   tick "$@" | sed 's/\x1b\[[0-9;]*m//g' | grep -o '[0-9-][0-9-]:[0-9-][0-9-]' | head -n 1
 }
+countdown() { same_second countdown_once "$@"; }
 
 echo 3600 > "$TTL"; check "1h countdown"                    59:30 "$(countdown)"
 echo 300  > "$TTL"; check "5m countdown"                    04:30 "$(countdown)"
@@ -139,7 +152,8 @@ rm -f "$TTL";       check "{miss} with no TTL → empty"      empty          "$(
 # BURNBAR_CACHE_WIDTH=0: the colored countdown alone, no bar cells (grey bg 47
 # or a color bg 41-43), no leading space. Also in the --:-- state (no API call).
 # $1 = 1: last API call 30 s ago (fresh epoch, as in countdown), 0: none yet.
-plain()     { touch_ts "$1"; tick | sed 's/\x1b\[[0-9;]*m//g'; }
+plain_once() { touch_ts "$1"; tick | sed 's/\x1b\[[0-9;]*m//g'; }
+plain()     { same_second plain_once "$1"; }
 bar_cells() { touch_ts "$1"; tick | grep -c $'\033\[4[1237]m'; }
 touch_ts()  { if [ "$1" = 1 ]; then echo "$(( $(date +%s) - 30 ))" > "$TS"; else rm -f "$TS"; fi; }
 echo 300 > "$TTL"
