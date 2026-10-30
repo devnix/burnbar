@@ -44,7 +44,7 @@ The reader is a user who upgrades from the previous release. `--generate-notes` 
 - **`Upgrade notes` come first.** Put here what the reader must do or will notice without asking: a removed tag or variable, a changed default and how to keep the old one, a restart. Always list a new network request or a new use of credentials: what is sent, where, how often, and how to turn it off.
 - **One bullet = one effect the user can see.** Name the tag or variable, and link the PR when there is one. Do not name internal functions or files, and do not paste commit subjects.
 - **Leave out** CI, tests, internal docs and refactors. Include performance only with a measured number and only when the user can notice it.
-- **Credit** external contributors by name. Do not write a bare `@name` unless it is their real login.
+- **Thank the co-authors in the bullet.** When a bullet comes from a commit with a human `Co-authored-by` trailer or a superseded PR of another person, end that bullet with `(thanks @<login>!)`, not with a paragraph or a full name at the end of the notes. GitHub notifies that login and lists it on the Release. Get the real login from the PR (`gh pr view <n> --json author`), never from the name or the email. Do not thank AI co-authors.
 - **End with** `**Full Changelog**: https://github.com/devnix/burnbar/compare/<prev>...<version>`.
 
 ## Hook Output
