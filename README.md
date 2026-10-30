@@ -153,21 +153,21 @@ You can set variables inline in your `~/.claude/settings.json`:
 
 The prompt cache has a TTL of 5 minutes or 1 hour — after expiration, your next message reprocesses the entire conversation (higher latency, higher cost; `{miss}` shows how much). The `{cache}` tag shows a progress bar that drains over the TTL with a `MM:SS` countdown, so you can decide whether to keep going or start fresh. To save space, hide the bar with `BURNBAR_CACHE_WIDTH=0`: the countdown keeps its colors and its flash on expiry.
 
-Claude Code picks the TTL per user (subscription, settings, `ENABLE_PROMPT_CACHING_1H`). Burnbar reads it from the session transcript after each API call (the `PostToolUse` and `Stop` hooks): the last cache write tells 5m or 1h. Until the first cache write, the timer assumes 5 minutes. To force a value, set `BURNBAR_CACHE_TTL` (seconds).
+Claude Code picks the TTL per user (subscription, settings, `ENABLE_PROMPT_CACHING_1H`). Burnbar reads it from the session transcript after each API call (the `PreToolUse`, `PostToolUse` and `Stop` hooks): the last cache write tells 5m or 1h. Burnbar never guesses: until the first cache write of the session, the timer shows `--:--` and `{miss}` is empty.
 
 | Color | Remaining | Meaning |
 |-------|-----------|---------|
-| Grey | `--:--` | No API call yet (session just started) |
+| Grey | `--:--` | No cache read or write seen yet in this session |
 | Green | > 40% of the TTL (> 2 min on a 5m cache) | Cache is warm |
 | Yellow | 20–40% (1–2 min) | Approaching expiration |
 | Red | < 20% (< 1 min) | Near expiration |
 | Flashing red | `00:00` | Expired: the next message pays `{miss}`. Needs `refreshInterval: 1` |
 
-The timer resets on every API call — when you submit a message (`UserPromptSubmit`) or Claude uses a tool (`PostToolUse`). Before your first interaction, the bar renders in a neutral grey state with `--:--`.
+The timer restarts only when a response shows that the cache was read or written, and it counts from the start of that request, as the API does. A message you send does not restart it by itself: while a request runs, the timer keeps counting from the previous one, so it can be low until the response arrives, never high.
 
 ### Model & effort change tracking
 
-When the cache is created, Burnbar records the current model and effort level (per-session, using `session_id`). If you switch models or effort without sending a new message, a **`⚠ model`** or **`⚠ effort`** alert appears — the existing cache may not apply. The alert clears on your next API call.
+When the cache is created, Burnbar records the current model and effort level (per-session, using `session_id`). If you switch models or effort without sending a new message, a **`⚠ model`** or **`⚠ effort`** alert appears — the existing cache may not apply. The alert clears when a response of the new model reads or writes the cache.
 
 `⚠ effort` shows only on the models where an effort change rewrites the cache: Opus 4.5–4.8, Opus 5, Sonnet 4.6, Sonnet 5, Fable 5, Mythos 5 and Mythos 5.1. On Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, Claude Code sends the change as a per-turn message and the cache stays. Exception: with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, on Vertex, or on Bedrock without Mantle, Claude Code cannot send that message, so every model alerts.
 

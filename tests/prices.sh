@@ -18,6 +18,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 CFG="$TMP/cfg"; HOM="$TMP/home"; BIN="$TMP/bin"
 CACHE="$HOM/.cache/burnbar-prices"; LOCK="$CACHE.lock"
 mkdir -p "$CFG" "$BIN"
+echo 300 > "$CFG/.cache-ttl-pricetst"  # a 5m TTL: {miss} is empty while the TTL is unknown
 NOW=$(date +%s)
 fail=0
 

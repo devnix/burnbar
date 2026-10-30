@@ -8,7 +8,6 @@
 #                         optional group that survives iff ≥1 {tag} inside it is non-empty.
 #   BURNBAR_BAR_WIDTH   — progress bar width in cells (default: 20)
 #   BURNBAR_CACHE_WIDTH — cache bar width in cells (default: 8, 0 = countdown only)
-#   BURNBAR_CACHE_TTL   — cache TTL in seconds (default: detected per session, 300 or 3600)
 #   BURNBAR_NOTIFY_LEAD — seconds before cache expiry to notify (default: 300, max TTL/2)
 #   BURNBAR_FRESH_PRICES — 0 = the built-in {miss} price table only, no download
 #                          (default: 1, refresh the prices daily from models.dev)
@@ -367,21 +366,20 @@ FH_BAR_WIDTH="${BURNBAR_5H_WIDTH:-8}"
 UNFILLED_BG="47"
 
 cache_key="${session_id:0:8}"
-# Cache TTL: BURNBAR_CACHE_TTL, else the one the hook read from the transcript
-# (300 or 3600), else 300 (the API default, until the first cache write).
-CACHE_TTL="${BURNBAR_CACHE_TTL:-}"
-case "$CACHE_TTL" in
-  ''|0|*[!0-9]*)
-    CACHE_TTL=""
-    [ -f "$CONFIG_DIR/.cache-ttl-$cache_key" ] && read -r CACHE_TTL < "$CONFIG_DIR/.cache-ttl-$cache_key"
-    case "$CACHE_TTL" in 300|3600) ;; *) CACHE_TTL=300 ;; esac ;;
-esac
+# Cache TTL: the one the hook read from the transcript (300 or 3600). No cache
+# write seen in this session → unknown: no countdown and no {miss}, never a
+# guess.
+CACHE_TTL=""
+[ -f "$CONFIG_DIR/.cache-ttl-$cache_key" ] && read -r CACHE_TTL < "$CONFIG_DIR/.cache-ttl-$cache_key"
+case "$CACHE_TTL" in 300|3600) ;; *) CACHE_TTL="" ;; esac
 # Cache-write price multiplier of the base input price: 2x for 1h, 1.25x for 5m
-if [ "$CACHE_TTL" -gt 300 ]; then cache_wmul=2; else cache_wmul=1.25; fi
+if [ "$CACHE_TTL" = 3600 ]; then cache_wmul=2; else cache_wmul=1.25; fi
+# The timestamp is the start of the last API call that read or wrote the
+# cache (the hook reads it from the transcript).
 ts_file="$CONFIG_DIR/.cache-ts-$cache_key"
 remaining=0
 has_cache=0
-if [ -f "$ts_file" ]; then
+if [ -n "$CACHE_TTL" ] && [ -f "$ts_file" ]; then
   read -r last < "$ts_file" 2>/dev/null
   if ! [ "$last" -gt 0 ] 2>/dev/null; then last=0; fi
   if [ "$last" -gt 0 ] 2>/dev/null; then
@@ -470,10 +468,11 @@ _find_tty() {
 #   (5m TTL → 2:30, 1h TTL → 5:00).
 #   BURNBAR_NOTIFY: auto|osc9|osc99|osc777|bell|none
 _maybe_notify() {
+  [ "$has_cache" = 1 ] || return 0  # also: TTL unknown
   local _lead="${BURNBAR_NOTIFY_LEAD:-300}"
   case "$_lead" in ''|*[!0-9]*) _lead=300 ;; esac
   [ "$_lead" -gt $((CACHE_TTL / 2)) ] && _lead=$((CACHE_TTL / 2))
-  [ "$has_cache" = 1 ] && [ "$remaining" -gt 0 ] && [ "$remaining" -le "$_lead" ] || return 0
+  [ "$remaining" -gt 0 ] && [ "$remaining" -le "$_lead" ] || return 0
   local _notif_file="$CONFIG_DIR/.cache-notif-$cache_key"
   if [ -f "$_notif_file" ]; then
     local _notif_ts; read -r _notif_ts < "$_notif_file" 2>/dev/null
@@ -702,7 +701,10 @@ _pct="${used_pct_int}%"
 _ctx="ctx:\033[${level_bold}m${ctx_fmt}\033[00m"
 # {miss}: cost of the next message on a cache miss. Red when the cache has
 # expired: the next message pays it. {next} is its former name (an alias).
-if [ "$model_known" = 1 ]; then
+# Empty while the TTL is unknown: the write price depends on it.
+if [ "$model_known" = 1 ] && [ -z "$CACHE_TTL" ]; then
+  _miss=""
+elif [ "$model_known" = 1 ]; then
   if [ "$has_cache" = 1 ] && [ "$remaining" -eq 0 ]; then _miss_c="01;31"; else _miss_c="01;33"; fi
   _miss="miss:\033[${_miss_c}m\$${miss_cost}\033[00m"
 else

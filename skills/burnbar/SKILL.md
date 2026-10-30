@@ -97,7 +97,6 @@ Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format 
 4. If they want to change bar widths, prepend the relevant var:
    - `BURNBAR_BAR_WIDTH=N` — context bar (default 20)
    - `BURNBAR_CACHE_WIDTH=N` — cache bar (default 8; `0` hides the bar and keeps the colored countdown, for users who want to save space)
-   - `BURNBAR_CACHE_TTL=N` — cache TTL in seconds (default: detected per session from the transcript, 300 or 3600)
    - `BURNBAR_5H_WIDTH=N` — 5h plan meter bar (default 8)
    - `BURNBAR_WEEKLY_WIDTH=N` — 7-day plan meter bar (default 8)
 5. If they want spend budgets (enables the bar in `{monthly}`/`{daily}`), prepend `BURNBAR_DAILY_BUDGET=N` (in the plan's currency). `BURNBAR_MONTHLY_BUDGET=N` only applies when the plan reports no limit of its own
