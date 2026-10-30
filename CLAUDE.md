@@ -107,23 +107,30 @@ Claude Code runs the statusline command **for all active sessions**, not just th
 
 ### Timestamp Files (`~/.claude/.cache-ts-<session_prefix>`)
 
-- Written by hooks (`UserPromptSubmit`, `PostToolUse`, `Stop`) using `date +%s`
-- Key = first 8 chars of `session_id` (per-session isolation)
-- Hooks use `$CLAUDE_CODE_SESSION_ID` env var (no jq needed)
-- Statusline reads the same key via `${session_id:0:8}` from its JSON input
-- Cleared on `SessionStart` to avoid stale data from previous sessions.
+The timer restarts only on evidence that the cache lives: a main-thread response with `cache_read_input_tokens + cache_creation_input_tokens > 0`. A read refreshes the lifetime too, and the lifetime runs from the **start** of the request (prompt caching docs). A prompt, a tool call or an API error is not evidence.
+
+- Written by the `PreToolUse` (async), `PostToolUse` and `Stop` hooks (`cache-touch.sh`), in the same `jq` pass over the transcript tail as the TTL and the model. The value is the epoch of the request start, not the hook time.
+- Request start: Claude Code (2.1.302) writes an `"type":"api-request"` entry (no `isSidechain`) when it sends each request. The hook takes the last one between the parent entry of the first response block (`parentUuid`: the prompt or the tool result) and that block. No request entry → the parent (early by the `UserPromptSubmit` hooks: 1.7 s measured); no parent in the tail → the block (late by the first tokens).
+- Blocks of one response share `message.id`: the first block in the file anchors the call.
+- The timestamp never moves back: only a newer epoch is written. No evidence → no write.
+- Key = first 8 chars of `session_id` (per-session isolation). Hooks use `$CLAUDE_CODE_SESSION_ID`; the statusline uses `${session_id:0:8}` from its JSON input.
+- Cleared on `SessionStart`: a new or resumed session shows `--:--` until its first evidence.
+- While a request runs, the timer keeps the last evidence: it can be low by the time to the response, and it can reach `00:00` although the request already refreshed the cache. It is never high. On consecutive turns the error is small. No in-flight marker: a `⟳` from `UserPromptSubmit` until the response was tried and removed, because an Esc before the first response block leaves no trace (no hook, and no `[Request interrupted by user]` entry in the transcript, measured on 2.1.314), so the marker stayed up with no request running.
+- Subagent events are skipped (`agent_id` in the stdin head, before `hook_event_name`; measured on 2.1.302): the tool hooks also fire inside a subagent, whose cache is separate. While a subagent runs, the main countdown keeps running, because the main cache is not refreshed.
+- `PreToolUse` is `"async": true` so that the transcript wait does not delay each tool, and the countdown restarts before a long tool runs. `PostToolUse` is synchronous and reads the same state: it is the fallback for the async hook, and a post-tool hook also stops tools from running detached.
+- Cache keepalive (checked in the 2.1.302 binary): interactive sessions with a 1h subscriber TTL send `anthropic-beta: cache-keepalive-2026-09-03` behind the `tengu_sequential_cloud` flag (`touchIntervalSeconds` 30, `activityWindowMinutes` 60). When the server answers `anthropic-cache-keepalive: active`, Claude Code calls `/v1/messages/cache_touch` during idle time, and the transcript does not show it: the countdown would be too low. Measured on an Enterprise account (2026-10-16): flag on, `--debug` shows `[cache-keepalive] response not active`, so no touches.
 
 ### TTL Files (`~/.claude/.cache-ttl-<session_prefix>`)
 
 Claude Code picks the cache TTL per user: 1h for subscribers (behind an allowlist and a feature flag), 1h with `ENABLE_PROMPT_CACHING_1H` or a setting, else 5m. The statusline JSON has no TTL: `current_usage` carries only the four token totals, not the `cache_creation` breakdown (checked in the 2.1.301 binary).
 
-- Written by the `PostToolUse` and `Stop` hooks (after each API call, off the hot path): the TTL can drop from 1h to 5m mid-turn (overage). It reads `transcript_path` from the first 8 KB of the hook stdin with a bash regex (`read -n 8192`: `tool_response` can be MBs, and bash reads a pipe byte by byte, ~0.35 s/MB measured), then takes the last `"isSidechain":false` entry in the last 256 KB of the transcript. `ephemeral_1h_input_tokens > 0` → `3600`, `ephemeral_5m_input_tokens > 0` → `300`, no write → keep the file. Take the last entry, never a sum: one session mixed 1h and 5m writes.
-- Statusline: `BURNBAR_CACHE_TTL`, else one `read` of the file (only `300`/`3600` are valid), else `300`.
+- Written by the `PreToolUse`, `PostToolUse` and `Stop` hooks (after each API call, off the hot path): the TTL can drop from 1h to 5m mid-turn (overage). It reads `transcript_path` from the first 8 KB of the hook stdin with a bash regex (`read -n 8192`: `tool_input` can be MBs, and bash reads a pipe byte by byte, ~0.35 s/MB measured), then takes the last `"isSidechain":false` entry with a cache write (1h + 5m tokens > 0) in the last 256 KB of the transcript. `ephemeral_1h_input_tokens > 0` → `3600`, else `300`; no write in the tail → keep the file. Skip the pure reads (`0`/`0`), but take the last write, never a sum: one session mixed 1h and 5m writes.
+- Statusline: one `read` of the file (only `300`/`3600` are valid). No valid file → the TTL is unknown: `--:--`, no notification, `{miss}` empty (its write price depends on the TTL). Never a default: a guessed 5m was the bug. There is no override variable: `BURNBAR_CACHE_TTL` was removed, because it hid a real 1h → 5m drop.
 - Do not infer the TTL from the auth type or from `rate_limits`: the binary decides it through an allowlist, a feature flag and a "keep 5m" path, so the plan alone does not tell it.
 - The colors scale with the TTL (green > 40%, yellow > 20%). The notification fires `BURNBAR_NOTIFY_LEAD` seconds before expiry (default 300), capped at 50% of the TTL: 5:00 on a 1h cache, 2:30 on a 5m cache.
 - Expired (`00:00`): the countdown flashes, white on red when the epoch second is even. The statusline runs once per second (`refreshInterval: 1`), so the color alternates with zero forks. SGR 5 (blink) did not show in a test on Claude Code with Ghostty.
 - `BURNBAR_CACHE_WIDTH=0` hides the bar: no `_render_bar` call and no leading space. A non-numeric width falls back to 8.
-- Known error: if `Stop` fires before the last response is in the transcript, a text-only turn reads the previous response. Worst case: one turn of lag. `PostToolUse` runs after the tool result is written, so it reads the current response.
+- `PreToolUse` and `Stop` fire before Claude Code writes the response to the transcript (measured: absent at +0 s, present at +0.2 s). The hook reparses every 0.1 s, up to 1 s, until the last main-thread user/assistant entry is an `assistant` entry; then it uses what is there. `PostToolUse` runs after the tool result is written, so it reads the response at once. The wait uses `sleep 0.1`: BSD, GNU and busybox `sleep` take fractions (macOS is checked only in CI).
 - Tested by `tests/cache-ttl.sh` (`make test`, `make test-bash32`).
 - Not cleared on `SessionStart` (a resumed session keeps its TTL); stale files (>1 day) are cleaned with the others.
 
@@ -146,9 +153,9 @@ Daily refresh, on by default (`BURNBAR_FRESH_PRICES=0` turns it off), of `price_
 - Key = first 8 chars of `session_id` (per-session isolation)
 - Format: `timestamp|model_id|effort_level` (pipe-delimited; `model_id` without `[1m]` except on the 200K models, `none` when absent)
 - **Baseline semantics**: model and effort are recorded when the file is created and reset on each new API call (`meta_ts != last`). Between API calls, the baseline is immutable — the alert persists while the current model/effort differs
-- Baseline resets when the user sends a message or Claude uses a tool (hook fires → new timestamp). The reset tick also evaluates the alert.
-- **Baseline model = the model of the last API call**, not the statusline model at the reset: a switch during a turn changes the statusline model, but the calls already made used the old one. On `PostToolUse`/`Stop`, `cache-touch.sh` reads `message.model` of the last main-thread assistant entry in the transcript tail and writes `.cache-model-<key>` as `epoch|model`, **before** the timestamp, with the same epoch. The statusline reads it only on a reset, and uses it only when its epoch equals `last` and its model differs from the current one (compared by `_model_key`, so `[1m]`, Bedrock and Vertex forms match). `UserPromptSubmit` writes `epoch|` (no model): a prompt goes to the current model.
-- The timestamp write stays unconditional: the transcript parse cannot skip it.
+- Baseline resets with the timestamp, so only on evidence of a cache read or write. The reset tick also evaluates the alert. A prompt to a new model keeps the alert until its response arrives.
+- **Baseline model = the model of the evidence call**, not the statusline model at the reset: a switch during a turn changes the statusline model, but the calls already made used the old one. `cache-touch.sh` writes `.cache-model-<key>` as `epoch|model` (`message.model` of the evidence entry), **before** the timestamp, with the same epoch. The statusline reads it only on a reset, and uses it only when its epoch equals `last` and its model differs from the current one (compared by `_model_key`, so `[1m]`, Bedrock and Vertex forms match).
+- No `UserPromptSubmit` hook: a prompt is not evidence.
 - Only the model comes from the transcript, not the effort: the effort sent (`effort` field) includes per-turn, hook and carried effort and the clamp when thinking is off, so it can differ from `effort.level` for good. An effort switch during a turn is still not caught.
 - Known false alert: a server refusal fallback answers with the fallback model, so `⚠ model` shows until the next API call.
 - Same-second limit: two hooks in one second give one `last`; the statusline sees one reset.
@@ -209,9 +216,9 @@ Performance: the notification path runs once per cache period (not every second)
 
 ### Turn Boundary Detection
 
-`cost.total_cost_usd` is only visible to the statusline (hooks don't receive it), and hooks fire on every API call (`PostToolUse`), not per turn. The split:
+`cost.total_cost_usd` is only visible to the statusline (hooks don't receive it), and hooks fire on every API call (`PreToolUse`), not per turn. The split:
 
-- **Hook side**: `hooks.json` passes the hook event name as `$1` to `cache-touch.sh`; on `Stop` it writes `~/.claude/.turn-ts-<session_prefix>` (turn marker). `UserPromptSubmit` and `PostToolUse` only update the cache timestamp.
+- **Hook side**: `hooks.json` passes the hook event name as `$1` to `cache-touch.sh`; on `Stop` it writes `~/.claude/.turn-ts-<session_prefix>` (turn marker), before the transcript wait. `PreToolUse` and `PostToolUse` only update the cache state.
 - **Statusline side**: when the marker differs from the one stored in `.cost-hist-<key>`, the turn ended — `delta = total_cost_usd - stored_base` is appended to the history, and marker/base are rewritten.
 
 `Stop` as the turn boundary captures the cost of each Claude response immediately (including all tool calls, subagents, and thinking), instead of deferring it until the next `UserPromptSubmit`. Using only `Stop` avoids spurious zero-cost deltas that `UserPromptSubmit` would produce (no work happened since the previous `Stop`).
@@ -320,6 +327,12 @@ The script runs every 1 second. Minimize subprocess forks.
 **Bug**: If the ts_file exists but contains empty or corrupt content, `last` is forced to 0 but `has_cache` is still set to 1. This renders a phantom 00:00 bar and may write a meta entry with `last=0`, causing spurious model-change alerts on subsequent ticks.
 
 **Fix**: Wrap the elapsed/remaining calculation in `if [ "$last" -gt 0 ]` — only activate `has_cache` when the timestamp is a valid positive integer.
+
+### A 5-minute timer on a 1-hour cache
+
+**Bug**: On a 1h cache, a new session showed `05:00` for its first turns. The statusline fell back to a 300 s TTL when the TTL file was absent. The `Stop` hook read the transcript before the response was in it, so a turn without tools never wrote the file. Each prompt restarted the guessed 5 minutes (`UserPromptSubmit` wrote the timestamp).
+
+**Fix**: No default: an unknown TTL shows `--:--`. The `Stop` hook waits up to 1 s for the response. The timestamp is the start of the last request that read or wrote the cache, from the transcript, not the hook time. See **Cache Timer Architecture**.
 
 ### `/proc/pid/stat` parsing with spaces in comm
 

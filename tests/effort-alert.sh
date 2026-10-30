@@ -14,6 +14,7 @@ TEST_BASH="${TEST_BASH:-bash}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 CFG="$TMP/cfg"; HOM="$TMP/home"; mkdir -p "$CFG" "$HOM"
 SID="efftest-0000-0000"; KEY="${SID:0:8}"
+echo 3600 > "$CFG/.cache-ttl-$KEY"  # the alert shows only with a known TTL
 fail=0
 
 check() {  # $1 = name, $2 = expected, $3 = actual
@@ -76,29 +77,34 @@ check "legacy meta, new family → model alert" model  "$(alert claude-opus-5-5 
 # A switch during a turn changes the statusline model, not the model of the
 # calls already made: the hook reads that model from the transcript.
 TR="$TMP/transcript.jsonl"
-hook() {  # $1 = event. One API call per second: the statusline sees a new epoch.
-  sleep 1
+hook() {  # $1 = event
   printf '{"session_id":"%s","transcript_path":"%s","hook_event_name":"%s"}' "$SID" "$TR" "$1" |
     env -i PATH="$PATH" HOME="$HOM" CLAUDE_CONFIG_DIR="$CFG" CLAUDE_CODE_SESSION_ID="$SID" \
       "$TEST_BASH" "$REPO/hooks/cache-touch.sh" "$1"
 }
-call() {  # $1 = model of the API call; a tool input with its own "model" key
-  printf '{"isSidechain":false,"type":"assistant","message":{"model":"%s","content":[{"type":"tool_use","input":{"model":"x-claude-y"}}]}}\n' "$1" >> "$TR"
+# One API call that read the cache, 10 s after the previous one: the
+# statusline sees a new epoch. A tool input with its own "model" key.
+T=$(( $(date +%s) - 600 )); N=0
+call() {  # $1 = model of the API call
+  local ts
+  T=$((T + 10)); N=$((N + 1))
+  ts=$(date -u -d "@$T" +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -r "$T" +%Y-%m-%dT%H:%M:%S.000Z)
+  printf '{"isSidechain":false,"type":"assistant","uuid":"a%d","timestamp":"%s","message":{"id":"m%d","model":"%s","usage":{"cache_read_input_tokens":100},"content":[{"type":"tool_use","input":{"model":"x-claude-y"}}]}}\n' \
+    "$N" "$ts" "$N" "$1" >> "$TR"
 }
-rm -f "$CFG/.cache-meta-$KEY"; : > "$TR"
-call claude-opus-5; hook PostToolUse
+rm -f "$CFG/.cache-meta-$KEY" "$CFG/.cache-ts-$KEY"; : > "$TR"
+call claude-opus-5; hook PreToolUse
 check "switch during the turn → model alert"  model "$(render claude-opus-5-5 high)"
 check "alert stays on the next tick"          model "$(render claude-opus-5-5 high)"
 hook UserPromptSubmit
-check "prompt to the new model → no alert"    none  "$(render claude-opus-5-5 high)"
+check "prompt is not evidence → alert stays"  model "$(render claude-opus-5-5 high)"
 call claude-opus-5-5; hook Stop
 check "call made by the current model → none" none  "$(render claude-opus-5-5 high)"
 call claude-sonnet-4-6; hook Stop
 check "transcript id vs [1m] id → no alert"   none  "$(render 'claude-sonnet-4-6[1m]' high)"
-call claude-opus-4-6; hook PostToolUse
+call claude-opus-4-6; hook PreToolUse
 check "Bedrock id vs transcript id → none"    none  "$(render us.anthropic.claude-opus-4-6-v1 high)"
-rm -f "$TR" "$CFG/.cache-ts-$KEY"; hook PostToolUse
-ts=""; [ -f "$CFG/.cache-ts-$KEY" ] && read -r ts < "$CFG/.cache-ts-$KEY"
-check "no transcript → timestamp written"     yes   "$([ -n "$ts" ] && echo yes || echo no)"
+rm -f "$TR" "$CFG/.cache-ts-$KEY"; hook PreToolUse
+check "no transcript → no timestamp"          no    "$([ -f "$CFG/.cache-ts-$KEY" ] && echo yes || echo no)"
 
 exit "$fail"
