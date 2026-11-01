@@ -85,19 +85,19 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{cwd}` | Current working directory, with `$HOME` shortened to `~` |
 | `{branch}` | Current git branch, or the short SHA on a detached HEAD; empty outside a repo |
 | `{model}` | Model name (e.g., "Claude Sonnet 4.6") |
-| `{bar}` | Context window progress bar with color gradient |
+| `{bar}` | Context window progress bar with color gradient (`BURNBAR_BAR_WIDTH=0`: hidden) |
 | `{pct}` | Usage percentage (e.g., "47%") |
 | `{ctx}` | Current context tokens (e.g., "ctx:94.2k") |
 | `{miss}` | Cost of the next message on a cache miss (e.g., "miss:$1.2160"); red when the cache has expired. See [Pricing model](#pricing-model) |
 | `{next}` | Former name of `{miss}` (an alias) |
 | `{total}` | Cumulative session cost |
-| `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline)) |
+| `{spark}` | Per-turn cost sparkline (see [Cost sparkline](#cost-sparkline); `BURNBAR_SPARK_WIDTH=0`: hidden) |
 | `{delta}` | Cost of the current turn, live; between turns, of the last turn (e.g., "delta:$0.0312") |
 | `{cache}` | Cache TTL progress bar + `MM:SS` countdown (`BURNBAR_CACHE_WIDTH=0`: countdown only) |
-| `{monthly}` | Billed spend of the billing period (Enterprise usage, extra-usage credits) from the claude.ai plan-usage endpoint, with the plan's limit as bar + `%`. `BURNBAR_MONTHLY_BUDGET` only applies when the plan has no limit. A `~` before the amount (`mo:~$98.33`) marks a reading older than 15 minutes: the endpoint failed (for example, rate limit) and the retries back off from 5 minutes up to 1 hour |
-| `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar + `%` when `BURNBAR_DAILY_BUDGET` is set; `~` as in `{monthly}` |
-| `{5h}` | 5-hour plan-usage meter (bar + `%` + reset clock `↺HH:MM`); Pro/Max only |
-| `{1w}` | 7-day plan-usage meter (bar + `%` + countdown + reset clock); Pro/Max only |
+| `{monthly}` | Billed spend of the billing period (Enterprise usage, extra-usage credits) from the claude.ai plan-usage endpoint, with the plan's limit as bar + `%`. `BURNBAR_MONTHLY_BUDGET` only applies when the plan has no limit. A `~` before the amount (`mo:~$98.33`) marks a reading older than 15 minutes: the endpoint failed (for example, rate limit) and the retries back off from 5 minutes up to 1 hour. `BURNBAR_MONTHLY_WIDTH=0` hides the bar |
+| `{daily}` | Today's billed spend, derived from `{monthly}` readings; bar + `%` when `BURNBAR_DAILY_BUDGET` is set; `~` as in `{monthly}`. `BURNBAR_DAILY_WIDTH=0` hides the bar |
+| `{5h}` | 5-hour plan-usage meter (bar + `%` + reset clock `↺HH:MM`); Pro/Max only. `BURNBAR_5H_WIDTH=0` hides the bar |
+| `{1w}` | 7-day plan-usage meter (bar + `%` + countdown + reset clock); Pro/Max only. `BURNBAR_WEEKLY_WIDTH=0` hides the bar |
 | `{sep}` | Responsive group separator — renders ` │ ` when the line fits, else a newline |
 | `{wrap}` | Soft break — renders `BURNBAR_WRAP_SEP` (default one space) when the line fits, else a newline |
 
@@ -107,6 +107,9 @@ disappears otherwise. The default format uses this so the `5h:`/`1w:`/`cache:`
 labels vanish together with their meters when no data is available (e.g. `{5h}`
 and `{1w}` are empty unless you are on a Pro/Max plan). Groups are flat and may not
 contain `{sep}`/`{wrap}`.
+
+An empty tag takes the spaces before it, so `{ctx} {bar} {pct}` without a bar renders
+`ctx:94.2k 47%`.
 
 Default (when `BURNBAR_FORMAT` is not set):
 
@@ -130,12 +133,23 @@ export BURNBAR_FORMAT='{model} ·· {bar} {pct} 🔥 {ctx}  {miss}'
 export BURNBAR_FORMAT='{model}  {bar}  {pct}  {ctx}  {total}  {cache} {miss}'
 ```
 
-### `BURNBAR_BAR_WIDTH`
+### Bar widths
 
-Progress bar width in terminal cells. Default: `20`.
+Each bar has its own width in terminal cells. Set `0` to hide the bar and keep the rest of the tag, to save space. A non-numeric value falls back to the default.
+
+| Variable | Bar | Default | Text that stays at `0` |
+|----------|-----|---------|------------------------|
+| `BURNBAR_BAR_WIDTH` | `{bar}` | `20` | None: use `{pct}` and `{ctx}` |
+| `BURNBAR_CACHE_WIDTH` | `{cache}` | `8` | Countdown and alerts |
+| `BURNBAR_5H_WIDTH` | `{5h}` | `8` | `%` and reset clock |
+| `BURNBAR_WEEKLY_WIDTH` | `{1w}` | `8` | `%`, countdown and reset clock |
+| `BURNBAR_MONTHLY_WIDTH` | `{monthly}` | `8` | Amounts and `%` |
+| `BURNBAR_DAILY_WIDTH` | `{daily}` | `8` | Amounts and `%` |
+| `BURNBAR_SPARK_WIDTH` | `{spark}` | `8` | None: use `{delta}` |
 
 ```bash
-export BURNBAR_BAR_WIDTH=20
+export BURNBAR_BAR_WIDTH=12
+export BURNBAR_5H_WIDTH=0   # 5h: 47% ↺18:30
 ```
 
 ### Setting env vars via Claude Code settings
@@ -203,7 +217,7 @@ total:$3.42  ⣀⣀⣀⣸⣀⣠⣀⣀
 
 Each turn's cost (the delta of `cost.total_cost_usd` between responses) is scaled against the most expensive turn in the visible window. In the default braille/octant modes, each terminal cell packs **two turns** side by side — the default 8 cells cover the last 16 turns.
 
-The sparkline always renders at its full configured width — unused cells show the same grey background as the unfilled bar sections, so the layout stays stable as turns accumulate.
+The sparkline always renders at its full configured width, unless that width is `0` — unused cells show the same grey background as the unfilled bar sections, so the layout stays stable as turns accumulate.
 
 The current turn is live: while Claude works, its cost so far is drawn as the last column and grows with each API call. When the turn ends, the recorded cost replaces it in the same slot. If the live turn becomes the most expensive one in the window, the older bars shrink to keep the scale.
 
@@ -219,7 +233,7 @@ Rendering mode. Default: `auto`.
 | `braille` | 2×4 dots | 2 | Universal font support |
 | `octant` | 2×4 solid | 2 | Unicode 16 block octants — best looks, needs terminal support |
 | `blocks` | 1×8 | 1 | Classic `▁▂▃▄▅▆▇█` sparkline |
-| `none` | — | — | Disable (skips cost-history tracking; the turn-marker hook still runs) |
+| `none` | — | — | Disable (skips cost-history tracking, so `{delta}` stays at `$0.0000`; the turn-marker hook still runs). To hide only the sparkline, use `BURNBAR_SPARK_WIDTH=0` |
 
 ```bash
 export BURNBAR_SPARK=blocks
@@ -227,10 +241,11 @@ export BURNBAR_SPARK=blocks
 
 ### `BURNBAR_SPARK_WIDTH`
 
-Sparkline width in terminal cells. Default: `8` (= 16 turns in braille/octant, 8 in blocks).
+Sparkline width in terminal cells. Default: `8` (= 16 turns in braille/octant, 8 in blocks). Set `0` to hide the sparkline: `{delta}` keeps working.
 
 ```bash
 export BURNBAR_SPARK_WIDTH=12
+export BURNBAR_SPARK_WIDTH=0   # {delta} only, saves space
 ```
 
 ## Pricing model

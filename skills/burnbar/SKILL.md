@@ -90,18 +90,22 @@ Available tags:
 
 Wrap empty-capable tags in `[[ ... ]]` to suppress the surrounding label when the tag is empty (e.g. `[[cache: {cache}]]`, `[[5h: {5h}]]`).
 
+An empty tag takes the spaces before it, so `{ctx} {bar} {pct}` without a bar keeps one space.
+
 Use `\n` for newlines and `\033[...]m...\033[00m` for ANSI colors in the format string.
 
 1. Ask the user which layout they want, or help them build a format string
 2. Read `$CONFIG_DIR/settings.json`
 3. Update `statusLine.command` to prepend `BURNBAR_FORMAT='...'` before the bash command
-4. If they want to change bar widths, prepend the relevant var:
-   - `BURNBAR_BAR_WIDTH=N` — context bar (default 20)
-   - `BURNBAR_CACHE_WIDTH=N` — cache bar (default 8; `0` hides the bar and keeps the colored countdown, for users who want to save space)
-   - `BURNBAR_5H_WIDTH=N` — 5h plan meter bar (default 8)
-   - `BURNBAR_WEEKLY_WIDTH=N` — 7-day plan meter bar (default 8)
+4. If they want to change bar widths or hide a bar, prepend the relevant var. On every width, `0` hides the bar and keeps the rest of the tag, for users who want to save space:
+   - `BURNBAR_BAR_WIDTH=N` — context bar `{bar}` (default 20)
+   - `BURNBAR_CACHE_WIDTH=N` — cache bar (default 8; `0` keeps the colored countdown)
+   - `BURNBAR_5H_WIDTH=N` — 5h plan meter bar (default 8; `0` keeps `%` + `↺HH:MM`)
+   - `BURNBAR_WEEKLY_WIDTH=N` — 7-day plan meter bar (default 8; `0` keeps `%` + countdown)
+   - `BURNBAR_MONTHLY_WIDTH=N` — `{monthly}` bar (default 8; `0` keeps the amounts + `%`)
+   - `BURNBAR_DAILY_WIDTH=N` — `{daily}` bar (default 8; `0` keeps the amounts + `%`)
 5. If they want spend budgets (enables the bar in `{monthly}`/`{daily}`), prepend `BURNBAR_DAILY_BUDGET=N` (in the plan's currency). `BURNBAR_MONTHLY_BUDGET=N` only applies when the plan reports no limit of its own
-6. If they want to change the cost sparkline, prepend `BURNBAR_SPARK=auto|braille|octant|blocks|none` (rendering mode) or `BURNBAR_SPARK_WIDTH=N` (width in cells, default 8; braille/octant fit 2 turns per cell)
+6. If they want to change the cost sparkline, prepend `BURNBAR_SPARK=auto|braille|octant|blocks|none` (rendering mode) or `BURNBAR_SPARK_WIDTH=N` (width in cells, default 8; braille/octant fit 2 turns per cell; `0` hides the sparkline and `{delta}` keeps working, while `none` stops the tracking and `{delta}` stays at `$0.0000`)
 7. If they want the cache notification earlier or later, prepend `BURNBAR_NOTIFY_LEAD=N` (seconds before expiry, default 300, capped at half the TTL)
 8. If they want no request to models.dev, prepend `BURNBAR_FRESH_PRICES=0` (default `1`: the `{miss}` prices refresh daily from models.dev in the background; the built-in table stays the fallback)
 9. Tell the user to restart Claude Code
