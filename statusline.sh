@@ -18,7 +18,7 @@
 #   BURNBAR_DAILY_BUDGET   — daily budget in the plan's currency (0 = show spend only, no bar)
 #   BURNBAR_WEEKLY_WIDTH   — width of the 7-day (1w) plan-usage meter bar in cells (default: 8)
 #   BURNBAR_5H_WIDTH    — width of the 5h plan-usage meter bar in cells (default: 8)
-#   BURNBAR_WRAP_SEP    — separator used at {wrap} when line fits (default: "  ")
+#   BURNBAR_WRAP_SEP    — separator used at {wrap} when line fits (default: " ")
 #   BURNBAR_COLS        — override terminal width for wrap decisions (default: auto via stty)
 #   BURNBAR_SEP         — group separator character used at {sep} (default: "│")
 
@@ -68,7 +68,7 @@ _model_key() {
 
 # Format string — resolved up front so data sources can skip work for tags the
 # format does not use.
-_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
+_default_fmt='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m{wrap}[[\033[01;33m({branch})\033[00m]]\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
 _fmt="${BURNBAR_FORMAT:-$_default_fmt}"
 
 # ── Billed spend (claude.ai plan-usage endpoint, 5-min cache) ─────────────────
@@ -357,6 +357,41 @@ fi
 _user="${USER:-$(whoami)}"
 _host="${HOSTNAME%%.*}"
 _cwd="$cwd"
+if [ -n "$HOME" ]; then
+  case "$cwd" in
+    "$HOME") _cwd="~" ;;
+    "$HOME"/*) _cwd="~${cwd#"$HOME"}" ;;
+  esac
+fi
+
+# Current branch, from the HEAD file: no git fork. Walks up from the cwd; a
+# worktree or a submodule has a .git file with "gitdir: <path>". Detached HEAD →
+# short SHA. reftable keeps the real HEAD elsewhere: its placeholder → empty.
+_branch=""
+_read_branch() {
+  local _d="$cwd" _git _head=""
+  case "$_d" in /*) ;; *) return ;; esac
+  while [ ! -f "$_d/.git/HEAD" ] && [ ! -f "$_d/.git" ]; do
+    [ -n "$_d" ] || return
+    _d="${_d%/*}"
+  done
+  _git="$_d/.git"
+  if [ -f "$_git" ]; then
+    read -r _head < "$_git"
+    _head="${_head#gitdir: }"
+    case "$_head" in /*) _git="$_head" ;; *) _git="$_d/$_head" ;; esac
+    _head=""
+  fi
+  [ -f "$_git/HEAD" ] || return
+  read -r _head < "$_git/HEAD"
+  case "$_head" in
+    'ref: refs/heads/.invalid') ;;
+    'ref: refs/heads/'*) _branch="${_head#ref: refs/heads/}" ;;
+    ''|*[!0-9a-f]*) ;;
+    *) _branch="${_head:0:7}" ;;
+  esac
+}
+[[ "$_fmt" == *'{branch}'* ]] && _read_branch
 
 # ── Cache timer: read timestamp before awk ────────────────────────────────────
 BAR_WIDTH="${BURNBAR_BAR_WIDTH:-20}"
@@ -904,6 +939,7 @@ fi
 _user="${_user//\\/\\\\}"
 _host="${_host//\\/\\\\}"
 _cwd="${_cwd//\\/\\\\}"
+_branch="${_branch//\\/\\\\}"
 _model="${_model//\\/\\\\}"
 case "$current_effort" in
   low)    _effort_icon="○" ;;
@@ -952,7 +988,7 @@ while [[ "$_rest" == *'{'* ]]; do
   _res+="${_rest%%\{*}"; _rest="${_rest#*\{}"
   _tag="${_rest%%\}*}"
   case "$_tag" in
-    user|host|cwd|model|bar|pct|ctx|miss|next|total|spark|cache|delta|monthly|daily|5h|1w)
+    user|host|cwd|branch|model|bar|pct|ctx|miss|next|total|spark|cache|delta|monthly|daily|5h|1w)
       if [ "$_tag" != "$_rest" ]; then  # a closing } exists
         _vn="_$_tag"; _res+="${!_vn}"; _rest="${_rest#*\}}"
         continue
@@ -1004,12 +1040,12 @@ if [[ "$_out" == *'{sep}'* ]]; then
 fi
 
 # ── Responsive wrap ───────────────────────────────────────────────────────────
-#   {wrap} — soft break: renders as BURNBAR_WRAP_SEP (default "  ") or \n
+#   {wrap} — soft break: renders as BURNBAR_WRAP_SEP (default " ") or \n
 #   {sep}  — group separator: renders as " │ " (BURNBAR_SEP char) or \n with no char
 #   Both tags are processed left-to-right in document order.
 if [[ "$_out" == *'{wrap}'* ]] || [[ "$_out" == *'{sep}'* ]]; then
   _detect_cols
-  _wrap_inline="${BURNBAR_WRAP_SEP:-  }"
+  _wrap_inline="${BURNBAR_WRAP_SEP:- }"
   _sep_inline="\033[90m${BURNBAR_SEP:-│}\033[0m"
   # Split into segments and the separators between them (document order).
   _segs=() _kinds=() _rest="$_out"
@@ -1035,7 +1071,9 @@ if [[ "$_out" == *'{wrap}'* ]] || [[ "$_out" == *'{sep}'* ]]; then
     if [ "${_kinds[$_i]}" = sep ]; then _inline="$_sep_inline" _in_w=$_sep_w
     else _inline="$_wrap_inline" _in_w=$_wrap_w; fi
     _vis_width "${_nxt%%\\n*}"; _head_w=$_vlen
-    if [ "$(( _line_w + _in_w + _head_w ))" -ge "$((_term_cols - 2))" ]; then
+    if [ "$_head_w" -eq 0 ]; then
+      _out="${_out}${_nxt}"  # nothing follows on this line (a dropped group)
+    elif [ "$(( _line_w + _in_w + _head_w ))" -ge "$((_term_cols - 2))" ]; then
       _out="${_out}\\n${_nxt}"; _line_w=0
     else
       _out="${_out}${_inline}${_nxt}"; _line_w=$(( _line_w + _in_w ))
