@@ -86,8 +86,11 @@ echo "92.37|400.00|USD|1|$(( NOW + 86400 ))|91.32|$TODAY|1.05" \
             opus-4-6 haiku-5-5 sonnet-4-6 sonnet-5-5 opus-4-7; do echo "claude-$_m 3 0 0"; done
   echo "claude-opus-5-5 5 0 0"; } > "$HOM/.cache/burnbar-prices"
 
+mkdir -p "$HOM/dev/project/.git" "$HOM/dev/project/src/app"
+echo 'ref: refs/heads/perf/fixture' > "$HOM/dev/project/.git/HEAD"   # {branch} walks up 2 levels
+
 cat > "$TMP/in.json" <<EOF
-{"cwd":"/home/user/dev/project","session_id":"$SID",
+{"cwd":"$HOM/dev/project/src/app","session_id":"$SID",
  "model":{"id":"claude-opus-5-5","display_name":"Opus 5.5"},
  "effort":{"level":"high"},
  "context_window":{"used_percentage":47.3,
@@ -137,7 +140,7 @@ echo "Burnbar perf — $("$TEST_BASH" -c 'echo bash $BASH_VERSION'), $RUNS runs"
 
 # Sanity: the fixture renders every data tag (an empty tag would hide its cost).
 out=$(tick -- "$DEFAULT_FMT" 300 | sed 's/\x1b\[[0-9;]*m//g')
-for want in 'ctx:' 'miss:$0.9260' 'total:' 'cache:' 'delta:' '5h:' '1w:' 'mo:$92.37' 'day:$1.05'; do
+for want in '(perf/fixture)' 'ctx:' 'miss:$0.9260' 'total:' 'cache:' 'delta:' '5h:' '1w:' 'mo:$92.37' 'day:$1.05'; do
   [[ "$out" == *"$want"* ]] || { echo "  FAIL  fixture: '$want' missing from output"; fail=1; }
 done
 

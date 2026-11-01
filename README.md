@@ -12,7 +12,7 @@ Rich statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 - **Token count** showing current context size, color-matched to usage level
 - **Cost tracking** — per-message input cost estimate and cumulative session total
 - **Model-aware pricing** — auto-detects Opus/Sonnet/Haiku and applies correct rates
-- **user@host:cwd** header line for quick orientation
+- **user@host:cwd (branch)** header line for quick orientation
 - **Zero configuration** — auto-configures on install; backs up any existing statusline
 
 ## Install
@@ -82,7 +82,8 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 |-----|---------------|
 | `{user}` | Current username |
 | `{host}` | Hostname (short) |
-| `{cwd}` | Current working directory |
+| `{cwd}` | Current working directory, with `$HOME` shortened to `~` |
+| `{branch}` | Current git branch, or the short SHA on a detached HEAD; empty outside a repo |
 | `{model}` | Model name (e.g., "Claude Sonnet 4.6") |
 | `{bar}` | Context window progress bar with color gradient |
 | `{pct}` | Usage percentage (e.g., "47%") |
@@ -98,7 +99,7 @@ Format string for the statusline. Use `{tag}` placeholders for dynamic values, `
 | `{5h}` | 5-hour plan-usage meter (bar + `%` + reset clock `↺HH:MM`); Pro/Max only |
 | `{1w}` | 7-day plan-usage meter (bar + `%` + countdown + reset clock); Pro/Max only |
 | `{sep}` | Responsive group separator — renders ` │ ` when the line fits, else a newline |
-| `{wrap}` | Soft break — renders `BURNBAR_WRAP_SEP` (default two spaces) when the line fits, else a newline |
+| `{wrap}` | Soft break — renders `BURNBAR_WRAP_SEP` (default one space) when the line fits, else a newline |
 
 Static text can be wrapped in an **optional group** `[[ ... ]]`: the group (label
 included) is shown only when at least one `{tag}` inside it is non-empty, and
@@ -110,7 +111,7 @@ contain `{sep}`/`{wrap}`.
 Default (when `BURNBAR_FORMAT` is not set):
 
 ```bash
-'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
+'\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m{wrap}[[\033[01;33m({branch})\033[00m]]\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}'
 ```
 
 Examples:

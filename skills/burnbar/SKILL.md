@@ -69,7 +69,8 @@ Available tags:
 |-----|-------------|
 | `{user}` | Username |
 | `{host}` | Hostname (short) |
-| `{cwd}` | Working directory |
+| `{cwd}` | Working directory, with `$HOME` shortened to `~` |
+| `{branch}` | Current git branch, or the short SHA on a detached HEAD; empty outside a repo |
 | `{model}` | Model name + effort icon |
 | `{bar}` | Context window progress bar |
 | `{pct}` | Context window percentage |
@@ -85,7 +86,7 @@ Available tags:
 | `{5h}` | 5-hour plan-usage meter (bar + `%` + `↺HH:MM`); Pro/Max only, absent otherwise |
 | `{1w}` | 7-day plan-usage meter (bar + `%` + countdown + `↺HH:MM`); Pro/Max only, absent otherwise |
 | `{sep}` | Responsive separator: ` │ ` when line fits, newline otherwise |
-| `{wrap}` | Soft break: `BURNBAR_WRAP_SEP` (default two spaces) when line fits, newline otherwise |
+| `{wrap}` | Soft break: `BURNBAR_WRAP_SEP` (default one space) when line fits, newline otherwise |
 
 Wrap empty-capable tags in `[[ ... ]]` to suppress the surrounding label when the tag is empty (e.g. `[[cache: {cache}]]`, `[[5h: {5h}]]`).
 
@@ -112,7 +113,7 @@ Example commands (`/home/user/.claude` stands for the resolved config dir):
 
 ```
 # Default (all elements, colored header)
-BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}' bash "/home/user/.claude/burnbar-statusline.sh"
+BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m{wrap}[[\033[01;33m({branch})\033[00m]]\n{model}{wrap}{ctx} {bar} {pct}{sep}{total}{sep}[[cache: {cache}]] {miss}{sep}{delta} {spark}{sep}[[5h: {5h}]]{sep}[[1w: {1w}]]{sep}{monthly}{sep}{daily}' bash "/home/user/.claude/burnbar-statusline.sh"
 
 # Hide costs (screen sharing)
 BURNBAR_FORMAT='\033[01;32m{user}@{host}\033[00m:\033[01;34m{cwd}\033[00m\n{model}{wrap}{ctx} {bar} {pct}' bash "/home/user/.claude/burnbar-statusline.sh"

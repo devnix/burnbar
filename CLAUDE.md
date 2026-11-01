@@ -247,6 +247,16 @@ The octant table was generated from Unicode 16 `UnicodeData.txt` — the bottom-
 
 Hot path cost: one `read` per tick for the turn marker plus pure-bash rendering — zero additional forks. The history file is read with `read` builtins and written only on turn boundaries.
 
+## Git Branch (`{branch}`)
+
+Read from the `HEAD` file with builtins: `git branch --show-current` would add a fork per tick. Only when the format has `{branch}`.
+
+- **Walk**: up from `cwd` to the first `.git/HEAD` or `.git` file. A `.git` directory without `HEAD` does not stop the walk. A `.git` file (worktree, submodule) holds `gitdir: <path>`, absolute or relative to its own directory.
+- **`HEAD`**: `ref: refs/heads/<name>` → the name; a hex SHA → 7 chars; else empty. reftable keeps the real HEAD elsewhere and writes the placeholder `refs/heads/.invalid`, so a reftable repo shows nothing.
+- **Layout**: `{wrap}` before the group moves the branch to the next line when it does not fit. A separator with nothing after it on its line renders nothing, so a dropped group leaves no trailing spaces or blank line.
+- `{wrap}` does not split a `{cwd}` wider than the terminal.
+- Tested by `tests/branch.sh`: fixtures are plain files, because the bash 3.2 image has no git.
+
 ## Billed Spend (`{monthly}`, `{daily}`)
 
 Both tags come from `GET https://api.anthropic.com/api/oauth/usage` — the undocumented endpoint behind `/usage` (ADR-0002). It replaced ccusage: Burnbar has no ccusage dependency.

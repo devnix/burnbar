@@ -41,10 +41,11 @@ test:
 	bash tests/effort-alert.sh
 	bash tests/prices.sh
 	bash tests/plan-spend.sh
+	bash tests/branch.sh
 
 test-bash32:
 	docker run --rm -v "$$PWD":/w:ro $(BASH32_IMAGE) \
-	  bash -c 'apk add -q jq coreutils; bash /w/tests/cache-ttl.sh && bash /w/tests/live-delta.sh && bash /w/tests/effort-alert.sh && bash /w/tests/prices.sh && bash /w/tests/plan-spend.sh'
+	  bash -c 'apk add -q jq coreutils; bash /w/tests/cache-ttl.sh && bash /w/tests/live-delta.sh && bash /w/tests/effort-alert.sh && bash /w/tests/prices.sh && bash /w/tests/plan-spend.sh && bash /w/tests/branch.sh'
 
 # On Linux, strace is required: without it perf.sh silently skips the fork gate.
 perf:
