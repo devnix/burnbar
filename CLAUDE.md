@@ -121,8 +121,8 @@ Claude Code runs the statusline command **for all active sessions**, not just th
 
 The timer restarts only on evidence that the cache lives: a main-thread response with `cache_read_input_tokens + cache_creation_input_tokens > 0`. A read refreshes the lifetime too, and the lifetime runs from the **start** of the request (prompt caching docs). A prompt, a tool call or an API error is not evidence.
 
-- Written by the `PreToolUse` (async), `PostToolUse` and `Stop` hooks (`cache-touch.sh`), in the same `jq` pass over the transcript tail as the TTL and the model. The value is the epoch of the request start, not the hook time.
-- Request start: Claude Code (2.1.302) writes an `"type":"api-request"` entry (no `isSidechain`) when it sends each request. The hook takes the last one between the parent entry of the first response block (`parentUuid`: the prompt or the tool result) and that block. No request entry → the parent (early by the `UserPromptSubmit` hooks: 1.7 s measured); no parent in the tail → the block (late by the first tokens).
+- Written by the `PreToolUse` (async), `PostToolUse` and `Stop` (async) hooks (`cache-touch.sh`), in the same `jq` pass over the transcript tail as the TTL and the model. The value is the epoch of the request start, not the hook time.
+- Request start: Claude Code writes an `"type":"api-request"` entry (no `isSidechain`) when it sends each request. The hook takes the last one between the previous main-thread response and the first block of this response, with a timestamp not later than the block. File order is not event order (2.1.316): the prompt or an attachment can land after the request, so the `parentUuid` of the block is no bound. No request entry → the nearest ancestor that is not an `attachment` (early by the `UserPromptSubmit` hooks: 1.7 s measured); none in the tail → the block (late by the first tokens).
 - Blocks of one response share `message.id`: the first block in the file anchors the call.
 - The timestamp never moves back: only a newer epoch is written. No evidence → no write.
 - Key = first 8 chars of `session_id` (per-session isolation). Hooks use `$CLAUDE_CODE_SESSION_ID`; the statusline uses `${session_id:0:8}` from its JSON input.
@@ -130,6 +130,7 @@ The timer restarts only on evidence that the cache lives: a main-thread response
 - While a request runs, the timer keeps the last evidence: it can be low by the time to the response, and it can reach `00:00` although the request already refreshed the cache. It is never high. On consecutive turns the error is small. No in-flight marker: a `⟳` from `UserPromptSubmit` until the response was tried and removed, because an Esc before the first response block leaves no trace (no hook, and no `[Request interrupted by user]` entry in the transcript, measured on 2.1.314), so the marker stayed up with no request running.
 - Subagent events are skipped (`agent_id` in the stdin head, before `hook_event_name`; measured on 2.1.302): the tool hooks also fire inside a subagent, whose cache is separate. While a subagent runs, the main countdown keeps running, because the main cache is not refreshed.
 - `PreToolUse` is `"async": true` so that the transcript wait does not delay each tool, and the countdown restarts before a long tool runs. `PostToolUse` is synchronous and reads the same state: it is the fallback for the async hook, and a post-tool hook also stops tools from running detached.
+- `Stop` is `"async": true`: Claude Code can hold the response row until a synchronous `Stop` hook exits (see **Known Bugs and Fixes**). In `claude -p` the hook can die with the process: harmless, because `SessionStart` clears the timestamp on resume.
 - Cache keepalive (checked in the 2.1.302 binary): interactive sessions with a 1h subscriber TTL send `anthropic-beta: cache-keepalive-2026-09-03` behind the `tengu_sequential_cloud` flag (`touchIntervalSeconds` 30, `activityWindowMinutes` 60). When the server answers `anthropic-cache-keepalive: active`, Claude Code calls `/v1/messages/cache_touch` during idle time, and the transcript does not show it: the countdown would be too low. Measured on an Enterprise account (2026-10-16): flag on, `--debug` shows `[cache-keepalive] response not active`, so no touches.
 
 ### TTL Files (`~/.claude/.cache-ttl-<session_prefix>`)
@@ -364,6 +365,18 @@ The script runs every 1 second. Minimize subprocess forks.
 **Bug**: On a 1h cache, a new session showed `05:00` for its first turns. The statusline fell back to a 300 s TTL when the TTL file was absent. The `Stop` hook read the transcript before the response was in it, so a turn without tools never wrote the file. Each prompt restarted the guessed 5 minutes (`UserPromptSubmit` wrote the timestamp).
 
 **Fix**: No default: an unknown TTL shows `--:--`. The `Stop` hook waits up to 1 s for the response. The timestamp is the start of the last request that read or wrote the cache, from the transcript, not the hook time. See **Cache Timer Architecture**.
+
+### `Stop` hook waits for a row that its own exit releases
+
+**Bug**: With a mod loaded (2.1.316), Claude Code wrote the response row only after the synchronous `Stop` hook exited: `assistant`, `stop_hook_summary` and `turn_duration` landed together, 1.3 s after hook entry. The 1 s wait always ran out, so the timestamp kept the previous request (low by 41–86 s) and each turn end took 1.15 s more. Without a mod, the row arrives at +0.13 s: 0 slow `Stop` in 300+, with one unexplained case in 2.1.314.
+
+**Fix**: `Stop` is `"async": true`. No seam in `tests/`: the bug is the order between a Claude Code write and a hook exit, so `tests/cache-ttl.sh` only pins the setting.
+
+### Timestamp anchored on an attachment row
+
+**Bug**: The hook bounded the request search by the `parentUuid` of the first response block. The parent is often an `attachment` row, written after the request, so no request was found and the attachment timestamp was stored: the timer ran high in 24% of 1197 real responses (≥ 1 s; p99 21 s, max 220 s).
+
+**Fix**: The bound is the previous main-thread response. See **Timestamp Files**.
 
 ### `/proc/pid/stat` parsing with spaces in comm
 

@@ -107,6 +107,28 @@ sub PreToolUse;            check "subagent event → no read"              E302 
 hook PostToolUse '\"agent_id\"'
                            check "tool text with agent_id → main thread" E402 "$(ts)"
 
+# File order is not the order of the events. The request entry is the anchor
+# wherever the parent of the block landed.
+attachment() {  # $1 = uuid, $2 = parent uuid, $3 = epoch
+  printf '{"isSidechain":false,"type":"attachment","uuid":"%s","parentUuid":"%s","timestamp":"%s"}\n' \
+    "$1" "$2" "$(iso "$3")" >> "$TR"
+}
+prompt p10 500; request 502; attachment t10 p10 506; block a10 t10 506 m10 7000 0 0
+hook PostToolUse;          check "parent attachment after the request"   E502 "$(ts)"
+request 601; prompt p11 600; block a11 p11 603 m11 7000 0 0
+hook PostToolUse;          check "parent user row after the request"     E601 "$(ts)"
+prompt p12 700; attachment t12 p12 704; block a12 t12 706 m12 7000 0 0
+hook PostToolUse;          check "no request, parent attachment → prompt" E700 "$(ts)"
+prompt p13 800; request 801; prompt p14 810; request 811; block a13 p14 813 m13 7000 0 0
+hook PostToolUse;          check "interrupted request → the last one"    E811 "$(ts)"
+prompt p15 900; request 901; request 909; block a15 p15 905 m15 7000 0 0
+hook PostToolUse;          check "request after the block → not its own" E901 "$(ts)"
+
+# Claude Code can hold the transcript write until a synchronous Stop hook exits
+# (measured with a mod loaded): the hook would wait for a row that cannot come.
+check "Stop hook is async" true \
+  "$(jq -r '.hooks.Stop[0].hooks[0].async' "$REPO/hooks/hooks.json")"
+
 # ── Statusline countdown, notification and {miss} ─────────────────────────────
 cat > "$TMP/in.json" <<EOF
 {"cwd":"/tmp","session_id":"$SID","model":{"id":"claude-opus-5-5","display_name":"Opus 5.5"},

@@ -39,11 +39,14 @@ _tr="${BASH_REMATCH[1]}"
 #   epoch — start of the last API call that read or wrote the cache: the
 #           evidence that the cache lives. A read refreshes the lifetime too,
 #           and the lifetime runs from the start of the request. Claude Code
-#           logs each request ("api-request", no isSidechain) between the
-#           parent entry of the first response block (the prompt or the tool
-#           result) and the block. No request entry → the parent (early by the
-#           prompt hooks, ~2 s); no parent in the tail → the block (late by
-#           the first tokens).
+#           logs each request ("api-request", no isSidechain) after the previous
+#           response and before the first block of this one. File order is not
+#           event order: the prompt or an attachment can land after the request,
+#           so the parent of the block is no bound. The last request not later
+#           than the block wins (an interrupted request leaves an entry too).
+#           No request entry → the nearest ancestor that is not an attachment
+#           (early by the prompt hooks, ~2 s; an attachment can be later than
+#           the request); none in the tail → the block (late by the first tokens).
 #   ttl   — TTL of the last cache write: 3600 if it wrote 1h tokens, else 300.
 #           A pure read carries no TTL.
 #   model — model of that call: the baseline of the model alert.
@@ -60,9 +63,13 @@ _jq='[inputs | fromjson? | select(type == "object")] as $all
    | last) as $cw
 | (if $ev == null then null else
      ([$a[] | select(.message.id != null and .message.id == $ev.message.id)] | first // $ev) as $f
-     | ([$e[] | select(.uuid != null and .uuid == $f.parentUuid)] | last) as $p
-     | ([$x[] | select(.type == "api-request" and ._i < $f._i and ._i > ($p._i // -1))] | last) as $r
-     | ($r.timestamp // $p.timestamp // $f.timestamp)
+     | ([$a[] | select(._i < $f._i)] | last._i // -1) as $prev
+     | ([$x[] | select(.type == "api-request" and ._i > $prev and ._i < $f._i
+                       and .timestamp <= $f.timestamp)] | last) as $r
+     | ([limit(64; $f | recurse(.parentUuid as $u
+           | if $u == null then empty else ([$e[] | select(.uuid == $u)] | last // empty) end))
+         | select(._i != $f._i and .type != "attachment")] | first) as $anc
+     | ($r.timestamp // $anc.timestamp // $f.timestamp)
    end) as $t
 | [$last,
    (try ($t | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch ""),
@@ -75,8 +82,9 @@ _parse() {
 _parse
 # PreToolUse and Stop fire before Claude Code writes the response to the
 # transcript (measured: absent at +0 s, present at +0.2 s). Wait for it, up to
-# 1 s; then use what is there. PreToolUse is async: the tool does not wait. In
-# PostToolUse the response is already there: no wait.
+# 1 s; then use what is there. Both are async: nothing waits for this hook, and
+# a synchronous Stop can hold the write back until it exits. In PostToolUse the
+# response is already there: no wait.
 _i=0
 while [ "$_last" != "assistant" ] && [ "$_i" -lt 10 ]; do
   sleep 0.1
